@@ -1,0 +1,23 @@
+# Build & Release outputs
+dist/
+*.zip
+
+# Internal AI guidelines & local agent configs (keep repository clean for public GitHub)
+AGENTS.md
+GEMINI.md
+.agents/
+.agent/
+_agents/
+_agent/
+
+# External store assets and local dev-reload shims not shipped inside the in-game addon
+Assets/Icon.tga
+BetterClickCastings.toc
+BetterClickCastings.lua
+
+# Editor & OS files
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

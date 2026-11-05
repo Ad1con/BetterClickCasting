@@ -1,0 +1,18 @@
+package-as: BetterClickCasting
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
+ignore:
+  - AGENTS.md
+  - GEMINI.md
+  - README.md
+  - build-release.ps1
+  - dist
+  - .github
+  - .agents
+  - .gitignore
+  - Assets/CurseForgeLogo.png
+  - BetterClickCastings.toc
+  - BetterClickCastings.lua

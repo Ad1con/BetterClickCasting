@@ -810,9 +810,15 @@ local function EnsureDeleteButtonStyled(lineFrame)
 		end
 	end)
 
-	-- Blizzards XML-Skript versteckt DeleteButton bei OnLeave; für löschbare Zeilen dauerhaft sichtbar halten
+	-- Blizzards XML-Skript und ClickBindingLineMixin:OnLeave verstecken DeleteButton bei OnLeave;
+	-- für löschbare Zeilen dauerhaft sichtbar halten.
 	delBtn:HookScript("OnLeave", function(self)
 		if ShouldShowDeleteButton(lineFrame) then
+			self:Show()
+		end
+	end)
+	delBtn:HookScript("OnHide", function(self)
+		if not self._bccAllowHide and ShouldShowDeleteButton(lineFrame) then
 			self:Show()
 		end
 	end)
@@ -1033,7 +1039,9 @@ function ClickBindingUI.UpdateLineWithRank(lineFrame, elementData)
 	local delBtn = EnsureDeleteButtonStyled(lineFrame)
 	local showDelete = ShouldShowDeleteButton(lineFrame, elementData)
 	if delBtn then
+		delBtn._bccAllowHide = not showDelete
 		delBtn:SetShown(showDelete)
+		delBtn._bccAllowHide = false
 	end
 
 	if lineFrame.BCCRankButton then

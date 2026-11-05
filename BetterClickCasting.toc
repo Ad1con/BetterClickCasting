@@ -13,7 +13,7 @@
 ## Category-deDE: Kampf
 ## X-Category: Action Bars, Combat, Unit Frames, Healer
 ## X-License: MIT
-## X-Curse-Project-ID: 
+## X-Curse-Project-ID: 1785285
 ## X-Wago-ID: 
 
 Locales\enUS.lua

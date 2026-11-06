@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.1] (2026-11-06)
+### Fixed
+- **Combat `PetActionBar:SetShownBase()` Taint Fix:** Decoupled the Spellbook 1-Click Quick-Bind overlay (`BCCQuickBindButton`) hover and drag handlers from `SpellBookItemMixin:OnIconEnter`, `OnIconLeave`, and `OnIconDragStart` so hovering spells in the Spellbook while Click Cast Bindings is open never calls `PetActionBar:ClearPetActionHighlightMarks()` or `PetActionBar:Update()` from AddOn context.
+- **Diagnostics (`/bcc debug`):** Added an in-game taint scanner command (`/bcc debug` and `/bcc debug taintlog`) that inspects `PetActionBar`, action bars, `EditModeManagerFrame`, and highlight globals via `issecurevariable`.
+
 ## [0.4.0] (2026-11-06)
 ### Added
 - **Smart Rank Rules (Per Binding):**

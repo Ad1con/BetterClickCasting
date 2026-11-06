@@ -49,6 +49,36 @@ local function AppendSpellBookBindingTooltip(spellBookItemFrame)
 	end
 end
 
+-- Taint-freier Tooltip-Helfer für unser Quick-Bind-Overlay:
+-- Ruft ausschließlich GameTooltip-APIs auf, ohne SpellBookItemMixin:OnIconEnter/OnIconLeave
+-- auszulösen (welche sonst PetActionBar:ClearPetActionHighlightMarks() und PetActionBar:Update()
+-- aus dem Addon-Kontext aufrufen und PetActionBar.isShownExternal für den Kampf tainten).
+local function ShowQuickBindSpellBookTooltip(spellBookItemFrame)
+	if not spellBookItemFrame or not spellBookItemFrame.HasValidData or not spellBookItemFrame:HasValidData() then
+		return
+	end
+	if not GameTooltip or not spellBookItemFrame.Button then
+		return
+	end
+
+	GameTooltip:SetOwner(spellBookItemFrame.Button, "ANCHOR_RIGHT")
+	if spellBookItemFrame.inClickBindMode and not spellBookItemFrame.canClickBind and CLICK_BINDING_NOT_AVAILABLE then
+		if GameTooltip_AddErrorLine then
+			GameTooltip_AddErrorLine(GameTooltip, CLICK_BINDING_NOT_AVAILABLE)
+		else
+			GameTooltip:SetText(CLICK_BINDING_NOT_AVAILABLE, 1.0, 0.1, 0.1, 1.0, true)
+		end
+		GameTooltip:Show()
+		return
+	end
+
+	if spellBookItemFrame.slotIndex and spellBookItemFrame.spellBank then
+		GameTooltip:SetSpellBookItem(spellBookItemFrame.slotIndex, spellBookItemFrame.spellBank)
+	end
+	AppendSpellBookBindingTooltip(spellBookItemFrame)
+	GameTooltip:Show()
+end
+
 local function EnsureSpellBookBindBadge(spellBookItemFrame)
 	if not spellBookItemFrame or not spellBookItemFrame.Button then
 		return nil
@@ -101,37 +131,63 @@ local function EnsureSpellBookQuickBindOverlay(spellBookItemFrame)
 	overlay:RegisterForClicks("AnyUp")
 	overlay:RegisterForDrag("LeftButton")
 
+	-- Wichtig: Niemals spellBookItemFrame:OnIconEnter() oder :OnIconLeave() aus dem Overlay aufrufen,
+	-- da Blizzard dort PetActionBar:ClearPetActionHighlightMarks() und PetActionBar:Update() -> :Hide()
+	-- aufruft und damit PET_ACTION_HIGHLIGHT_MARKS sowie PetActionBar.isShownExternal taintet.
 	overlay:SetScript("OnEnter", function()
-		if spellBookItemFrame.Button and spellBookItemFrame.Button.OnEnter then
-			spellBookItemFrame.Button:OnEnter()
-		elseif spellBookItemFrame.OnIconEnter then
-			spellBookItemFrame:OnIconEnter()
+		if not spellBookItemFrame.HasValidData or not spellBookItemFrame:HasValidData() then
+			return
+		end
+		ShowQuickBindSpellBookTooltip(spellBookItemFrame)
+		if not spellBookItemFrame.isUnlearned then
+			if spellBookItemFrame.Button and spellBookItemFrame.Button.IconHighlight then
+				spellBookItemFrame.Button.IconHighlight:Show()
+			end
+			if spellBookItemFrame.Backplate and spellBookItemFrame.hoverBackplateAlpha then
+				spellBookItemFrame.Backplate:SetAlpha(spellBookItemFrame.hoverBackplateAlpha)
+			end
 		end
 	end)
 
 	overlay:SetScript("OnLeave", function()
-		if spellBookItemFrame.Button and spellBookItemFrame.Button.OnLeave then
-			spellBookItemFrame.Button:OnLeave()
-		elseif spellBookItemFrame.OnIconLeave then
-			spellBookItemFrame:OnIconLeave()
+		if spellBookItemFrame.Button and spellBookItemFrame.Button.IconHighlight then
+			spellBookItemFrame.Button.IconHighlight:Hide()
+			if spellBookItemFrame.iconHighlightHoverAlpha then
+				spellBookItemFrame.Button.IconHighlight:SetAlpha(spellBookItemFrame.iconHighlightHoverAlpha)
+			end
+		end
+		if spellBookItemFrame.Backplate and spellBookItemFrame.defaultBackplateAlpha then
+			spellBookItemFrame.Backplate:SetAlpha(spellBookItemFrame.defaultBackplateAlpha)
+		end
+		if GameTooltip then
+			GameTooltip:Hide()
 		end
 	end)
 
 	overlay:SetScript("OnMouseDown", function()
-		if spellBookItemFrame.OnIconMouseDown then
-			spellBookItemFrame:OnIconMouseDown()
+		if not spellBookItemFrame.HasValidData or not spellBookItemFrame:HasValidData() then
+			return
+		end
+		if not spellBookItemFrame.isUnlearned and spellBookItemFrame.Button and spellBookItemFrame.Button.IconHighlight and spellBookItemFrame.iconHighlightPressAlpha then
+			spellBookItemFrame.Button.IconHighlight:SetAlpha(spellBookItemFrame.iconHighlightPressAlpha)
 		end
 	end)
 
 	overlay:SetScript("OnMouseUp", function()
-		if spellBookItemFrame.OnIconMouseUp then
-			spellBookItemFrame:OnIconMouseUp()
+		if not spellBookItemFrame.HasValidData or not spellBookItemFrame:HasValidData() then
+			return
+		end
+		if not spellBookItemFrame.isUnlearned and spellBookItemFrame.Button and spellBookItemFrame.Button.IconHighlight and spellBookItemFrame.iconHighlightHoverAlpha then
+			spellBookItemFrame.Button.IconHighlight:SetAlpha(spellBookItemFrame.iconHighlightHoverAlpha)
 		end
 	end)
 
 	overlay:SetScript("OnDragStart", function()
-		if spellBookItemFrame.OnIconDragStart then
-			spellBookItemFrame:OnIconDragStart()
+		if not spellBookItemFrame.HasValidData or not spellBookItemFrame:HasValidData() then
+			return
+		end
+		if C_SpellBook and C_SpellBook.PickupSpellBookItem and spellBookItemFrame.slotIndex and spellBookItemFrame.spellBank then
+			C_SpellBook.PickupSpellBookItem(spellBookItemFrame.slotIndex, spellBookItemFrame.spellBank)
 		end
 	end)
 
@@ -157,8 +213,8 @@ local function EnsureSpellBookQuickBindOverlay(spellBookItemFrame)
 		if actionType then
 			local modifiers = (MakeModifiers and MakeModifiers()) or 0
 			ns.ClickBindingUI.QuickBindSpell(actionType, actionID, mouseButton, modifiers)
-			if GameTooltip:IsOwned(spellBookItemFrame.Button) and spellBookItemFrame.ShowSpellBookTooltip then
-				spellBookItemFrame:ShowSpellBookTooltip()
+			if GameTooltip and GameTooltip:IsOwned(spellBookItemFrame.Button) then
+				ShowQuickBindSpellBookTooltip(spellBookItemFrame)
 			end
 		end
 	end)

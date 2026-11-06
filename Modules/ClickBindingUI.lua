@@ -1711,8 +1711,126 @@ function ClickBindingUI.PrepareSmartRuleTest()
 		if DEFAULT_CHAT_FRAME then
 			DEFAULT_CHAT_FRAME:AddMessage("|cff40ff40Better Click Casting (Test):|r " .. tostring(preparedCount) .. " Belegung(en) für Smart-Regel-Test (Immer MAX & Immer MAX - 1) vorbereitet. Klicke jetzt auf |cffffd100Speichern|r!")
 		end
-	elseif DEFAULT_CHAT_FRAME then
+		elseif DEFAULT_CHAT_FRAME then
 		DEFAULT_CHAT_FRAME:AddMessage("|cffffb833Better Click Casting (Test):|r Keine mehrstufigen Zauber in deinen Klickbelegungen gefunden.")
+	end
+end
+
+-- Diagnose-Werkzeug (/bcc debug, /bcc debug taintlog):
+-- Prüft mit Blizzards issecurevariable() sofort außerhalb des Kampfes, ob globale Highlight-Tabellen,
+-- Aktionsleisten (inkl. PetActionBar), EditModeManagerFrame oder PlayerSpellsFrame getaintete Felder besitzen.
+function ClickBindingUI.RunTaintDiagnostics(subArg)
+	if not DEFAULT_CHAT_FRAME then
+		return
+	end
+	if subArg == "taintlog" and SetCVar and GetCVar then
+		local current = tostring(GetCVar("taintLog") or "0")
+		local nextVal = (current == "0") and "1" or "0"
+		SetCVar("taintLog", nextVal)
+		DEFAULT_CHAT_FRAME:AddMessage("|cff40ff40Better Click Casting (Debug):|r CVar taintLog = " .. nextVal .. " (Logdatei: Logs/taint.log nach Reload/Logout).")
+		return
+	end
+
+	if not issecurevariable then
+		DEFAULT_CHAT_FRAME:AddMessage("|cffff4040Better Click Casting (Debug):|r issecurevariable ist in dieser Umgebung nicht verfügbar.")
+		return
+	end
+
+	local findings = {}
+	local function checkVar(tbl, key, label)
+		if tbl == nil then
+			return
+		end
+		local ok, taintSource = issecurevariable(tbl, key)
+		if not ok then
+			table.insert(findings, string.format("%s.%s (von %s)", label, tostring(key), tostring(taintSource or "unbekannt")))
+		end
+	end
+
+	-- 1. Globale Highlight-Tabellen prüfen
+	local okPetGlobal, srcPetGlobal = issecurevariable("PET_ACTION_HIGHLIGHT_MARKS")
+	if not okPetGlobal then
+		table.insert(findings, string.format("_G.PET_ACTION_HIGHLIGHT_MARKS (von %s)", tostring(srcPetGlobal or "unbekannt")))
+	end
+	local okBarGlobal, srcBarGlobal = issecurevariable("ON_BAR_HIGHLIGHT_MARKS")
+	if not okBarGlobal then
+		table.insert(findings, string.format("_G.ON_BAR_HIGHLIGHT_MARKS (von %s)", tostring(srcBarGlobal or "unbekannt")))
+	end
+
+	-- 2. Kritische Felder auf Aktionsleisten und EditMode-Systemen prüfen
+	local bars = {
+		{ frame = _G.PetActionBar, name = "PetActionBar" },
+		{ frame = _G.MainActionBar, name = "MainActionBar" },
+		{ frame = _G.MultiBarBottomLeft, name = "MultiBarBottomLeft" },
+		{ frame = _G.MultiBarBottomRight, name = "MultiBarBottomRight" },
+		{ frame = _G.MultiBarRight, name = "MultiBarRight" },
+		{ frame = _G.MultiBarLeft, name = "MultiBarLeft" },
+		{ frame = _G.StanceBar, name = "StanceBar" },
+		{ frame = _G.PossessActionBar, name = "PossessActionBar" },
+	}
+	local barKeys = {
+		"isShownExternal",
+		"visibility",
+		"editModeForceShow",
+		"showAllButtons",
+		"snappedToFrame",
+		"snappedFrames",
+		"flyoutDirection",
+		"rangeTimer",
+		"mode",
+		"completed",
+		"slideTimer",
+		"SetShownBase",
+		"HideBase",
+		"ShowBase",
+	}
+
+	for _, entry in ipairs(bars) do
+		local bar = entry.frame
+		if bar then
+			for _, k in ipairs(barKeys) do
+				if bar[k] ~= nil then
+					checkVar(bar, k, entry.name)
+				end
+			end
+			if type(bar.snappedFrames) == "table" then
+				for snapKey in pairs(bar.snappedFrames) do
+					-- issecurevariable akzeptiert nur String-Keys; da AddSnappedFrame() immer zusammen mit
+					-- snapKey.snappedToFrame = frame läuft, prüfen wir zusätzlich den String-Key auf dem Ziel-Frame.
+					if type(snapKey) == "string" then
+						local okSnap, srcSnap = issecurevariable(bar.snappedFrames, snapKey)
+						if not okSnap then
+							table.insert(findings, string.format("%s.snappedFrames[%s] (von %s)", entry.name, snapKey, tostring(srcSnap or "unbekannt")))
+						end
+					elseif type(snapKey) == "table" then
+						local okSnapTo, srcSnapTo = issecurevariable(snapKey, "snappedToFrame")
+						if not okSnapTo then
+							local snapName = (snapKey.GetName and snapKey:GetName()) or tostring(snapKey)
+							table.insert(findings, string.format("%s.snappedFrames->%s.snappedToFrame (von %s)", entry.name, snapName, tostring(srcSnapTo or "unbekannt")))
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- 3. EditModeManagerFrame und PlayerSpellsFrame prüfen
+	if _G.EditModeManagerFrame then
+		checkVar(_G.EditModeManagerFrame, "layoutApplyInProgress", "EditModeManagerFrame")
+	end
+	if _G.PlayerSpellsFrame then
+		checkVar(_G.PlayerSpellsFrame, "isMinimized", "PlayerSpellsFrame")
+		checkVar(_G.PlayerSpellsFrame, "minimizedOnNextShow", "PlayerSpellsFrame")
+	end
+
+	local taintLogVal = (GetCVar and GetCVar("taintLog")) or "0"
+	if #findings == 0 then
+		DEFAULT_CHAT_FRAME:AddMessage("|cff40ff40Better Click Casting (Debug):|r 0 Taints auf PetActionBar, ActionBars, EditModeManagerFrame und Highlight-Globals gefunden! (taintLog=" .. tostring(taintLogVal) .. ")")
+	else
+		DEFAULT_CHAT_FRAME:AddMessage("|cffff4040Better Click Casting (Debug):|r " .. tostring(#findings) .. " getaintete(s) Feld(er) gefunden (taintLog=" .. tostring(taintLogVal) .. "):")
+		for _, line in ipairs(findings) do
+			DEFAULT_CHAT_FRAME:AddMessage("  |cffffb833•|r " .. line)
+		end
 	end
 end
 
@@ -1870,7 +1988,6 @@ function ClickBindingUI.SetupHooks()
 	-- ruft ApplySmartRulesToDataProvider() auf.
 	if ClickBindingFrame.Refresh then
 		hooksecurefunc(ClickBindingFrame, "Refresh", function()
-			ClickBindingUI.EnsureSpellBookTabForClickBinding()
 			SpellRanks.InvalidateCache()
 			SetSaveButtonGlowShown(false)
 			ClickBindingUI.RebuildGroups()

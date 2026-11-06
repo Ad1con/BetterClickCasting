@@ -102,6 +102,11 @@ SlashCmdList["BETTERCLICKCASTING"] = function(msg)
 		if ClickBindingUI and ClickBindingUI.PrepareSmartRuleTest then
 			ClickBindingUI.PrepareSmartRuleTest()
 		end
+	elseif cmd == "debug" or string.sub(cmd, 1, 6) == "debug " then
+		if ClickBindingUI and ClickBindingUI.RunTaintDiagnostics then
+			local subArg = strtrim(string.sub(cmd, 7))
+			ClickBindingUI.RunTaintDiagnostics(subArg)
+		end
 	elseif cmd == "help" or cmd == "?" then
 		if DEFAULT_CHAT_FRAME then
 			DEFAULT_CHAT_FRAME:AddMessage(L["CHAT_HELP_HINT"])

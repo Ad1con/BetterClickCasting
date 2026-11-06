@@ -1,4 +1,4 @@
-## Interface: 16001, 16000, 11508
+## Interface: 16001
 ## Title: Better Click Casting
 ## Notes: Enhances Blizzard's native Click Cast Bindings with spell ranks, inline rank switching, grouping, tooltips, spellbook direct-binding, and a minimap button.
 ## Notes-deDE: Verbessert Blizzards native Klickbelegung (Zauberränge, direkter Rang-Wechsler, Gruppierung, Tooltips, Direkt-Binden im Zauberbuch und Minimap-Icon).

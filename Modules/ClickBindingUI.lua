@@ -1965,6 +1965,13 @@ function ClickBindingUI.EnsureSpellBookTabForClickBinding()
 	if InCombatLockdown and InCombatLockdown() then
 		return
 	end
+	-- Blizzard_PlayerSpells is load-on-demand. Before the player first opens the spellbook or
+	-- talents, PlayerSpellsFrame does not exist yet, and this guard used to give up here. Blizzard
+	-- then loaded it inside ClickBindingFrame:OnShow() with no tab chosen, and
+	-- SetToDefaultAvailableTab() picks the talents tab first.
+	if not PlayerSpellsFrame and PlayerSpellsFrame_LoadUI then
+		PlayerSpellsFrame_LoadUI()
+	end
 	if not PlayerSpellsFrame or not PlayerSpellsUtil or not PlayerSpellsUtil.FrameTabs then
 		return
 	end
@@ -1987,6 +1994,37 @@ function ClickBindingUI.EnsureSpellBookTabForClickBinding()
 			PlayerSpellsFrame:TrySetTab(spellBookTab)
 		end
 	end
+end
+
+-- Blizzard's own ways of opening click casting (its key binding, the slash command) call
+-- ToggleClickBindingFrame() directly, so the guard above never runs before them, and a
+-- hooksecurefunc post-hook runs too late: by then the talents panel has already closed the
+-- ClickBindingFrame. Instead, keep the hidden PlayerSpellsFrame on the spellbook tab, so a
+-- plain ShowUIPanel(PlayerSpellsFrame) shows the spellbook. Blizzard's talent and spec buttons
+-- always pick their tab before showing, so they are unaffected.
+local isPlayerSpellsHooked = false
+
+function ClickBindingUI.ResetHiddenPlayerSpellsTab()
+	if PlayerSpellsFrame and not PlayerSpellsFrame:IsShown() then
+		ClickBindingUI.EnsureSpellBookTabForClickBinding()
+	end
+end
+
+function ClickBindingUI.SetupPlayerSpellsHooks()
+	if isPlayerSpellsHooked or not PlayerSpellsFrame or not PlayerSpellsFrame.HookScript then
+		return
+	end
+	isPlayerSpellsHooked = true
+
+	-- Deferred one frame: OnHide runs in the middle of the panel manager's HideUIPanel/ShowUIPanel
+	-- work, and the frame may be reopened right away (then the check above skips the reset).
+	PlayerSpellsFrame:HookScript("OnHide", function()
+		C_Timer.After(0, ClickBindingUI.ResetHiddenPlayerSpellsTab)
+	end)
+
+	-- Just loaded: no tab chosen yet. When Blizzard loads the frame from ClickBindingFrame:OnShow(),
+	-- this runs before it shows the frame.
+	ClickBindingUI.ResetHiddenPlayerSpellsTab()
 end
 
 function ClickBindingUI.SyncAutoShowAllRanks()

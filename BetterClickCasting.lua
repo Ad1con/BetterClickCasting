@@ -38,6 +38,9 @@ loaderFrame:SetScript("OnEvent", function(self, event, arg1)
 		if SpellBookItemMixin then
 			SpellBookUI.SetupHooks()
 		end
+		if arg1 == "Blizzard_PlayerSpells" or arg1 == addonName then
+			ClickBindingUI.SetupPlayerSpellsHooks()
+		end
 	elseif event == "PLAYER_LOGIN" then
 		Database.Init()
 		MinimapButton.Init()
@@ -79,6 +82,10 @@ loaderFrame:SetScript("OnEvent", function(self, event, arg1)
 			ClickBindingUI.HideHeroCard()
 		end
 	elseif event == "PLAYER_REGEN_ENABLED" then
+		-- A talents panel closed during combat could not be reset then; do it now.
+		if ClickBindingUI and ClickBindingUI.ResetHiddenPlayerSpellsTab then
+			ClickBindingUI.ResetHiddenPlayerSpellsTab()
+		end
 		if ClickBindingUI and ClickBindingUI.ScheduleSmartRuleCheck then
 			ClickBindingUI.ScheduleSmartRuleCheck(0.6, false)
 		end

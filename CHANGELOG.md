@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- **Opening Click Cast Bindings no longer opens the talents window instead:** On WoW Forever the spellbook and talents share `PlayerSpellsFrame`, and the talents tab uses panel area `"center"`, which closes `ClickBindingFrame` as soon as it focuses the spells frame. The existing spellbook-tab guard only ran from the Minimap button and `/bcc`, and gave up when `Blizzard_PlayerSpells` was not loaded yet. It now loads the frame first, and the hidden `PlayerSpellsFrame` is put back on the spellbook tab after it closes (or after combat), so Blizzard's own key binding and slash command open the spellbook beside Click Cast Bindings too. The talents and spec buttons are unaffected, since they always choose their tab.
+
 ## [0.4.3] (2026-11-06)
 ### Fixed
 - **Complete Spellbook Hover Taint Protection (`_G.PET_ACTION_HIGHLIGHT_MARKS` & `PetActionBar:SetShownBase()`):**

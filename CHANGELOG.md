@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.2] (2026-11-06)
+### Fixed
+- **Rank 1 -> Rank 2 Smart Rule Initialization:** Bound spells that currently only have `Rank 1` learned in the Spellbook are now automatically initialized with the **Always MAX** rule in the background. When learning `Rank 2` at a class trainer later, the Upgrade Hero-Card reliably appears so you can upgrade immediately or switch to **Fixed Rank** via *"Keep Current Ranks"*.
+
 ## [0.4.1] (2026-11-06)
 ### Fixed
 - **Combat `PetActionBar:SetShownBase()` Taint Fix:** Decoupled the Spellbook 1-Click Quick-Bind overlay (`BCCQuickBindButton`) hover and drag handlers from `SpellBookItemMixin:OnIconEnter`, `OnIconLeave`, and `OnIconDragStart` so hovering spells in the Spellbook while Click Cast Bindings is open never calls `PetActionBar:ClearPetActionHighlightMarks()` or `PetActionBar:Update()` from AddOn context.

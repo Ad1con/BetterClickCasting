@@ -297,7 +297,13 @@ end
 
 function SpellRanks.GetRuleForBinding(bindingInfo, rankEntry)
 	rankEntry = rankEntry or (bindingInfo and SpellRanks.GetRankEntryForAction(bindingInfo.actionID))
-	if not rankEntry or not rankEntry.group or #rankEntry.group.entries <= 1 then
+	if not rankEntry or not rankEntry.group then
+		return SpellRanks.RULE_FIXED
+	end
+	-- Einzelmenge (erst 1 Rang gelernt) wird bereits als Smart-Regel erfasst,
+	-- sobald der Zauber eine echte Rangnummer besitzt (z. B. "Rang 1"), damit
+	-- beim späteren Erlernen von Rang 2 zuverlässig die erste Hero-Card erscheint.
+	if #rankEntry.group.entries <= 1 and not rankEntry.rankNum then
 		return SpellRanks.RULE_FIXED
 	end
 
@@ -391,19 +397,22 @@ function SpellRanks.GetPendingSmartRuleUpdates()
 	for _, bindingInfo in ipairs(profile) do
 		if bindingInfo and bindingInfo.button and bindingInfo.actionID and Constants.IsSpellOrPetBinding(bindingInfo) then
 			local rankEntry = SpellRanks.GetRankEntryForAction(bindingInfo.actionID)
-			if rankEntry and rankEntry.group and #rankEntry.group.entries > 1 then
+			if rankEntry and rankEntry.group then
+				-- Regel schon bei Rang 1 initialisieren, damit sie beim Erlernen von Rang 2 als RULE_MAX bereitsteht
 				local ruleMode = SpellRanks.GetRuleForBinding(bindingInfo, rankEntry)
-				local targetEntry = SpellRanks.GetTargetEntryForRule(rankEntry.group, ruleMode)
-				if targetEntry and targetEntry.actionID and targetEntry.actionID ~= bindingInfo.actionID then
-					table.insert(updates, {
-						bindingInfo = bindingInfo,
-						ruleKey = SpellRanks.MakeBindingRuleKey(bindingInfo, rankEntry),
-						ruleMode = ruleMode,
-						currentEntry = rankEntry,
-						targetEntry = targetEntry,
-						spellName = rankEntry.name,
-						spellIcon = SpellRanks.GetSpellIconForAction(targetEntry.actionID) or SpellRanks.GetSpellIconForAction(bindingInfo.actionID),
-					})
+				if #rankEntry.group.entries > 1 then
+					local targetEntry = SpellRanks.GetTargetEntryForRule(rankEntry.group, ruleMode)
+					if targetEntry and targetEntry.actionID and targetEntry.actionID ~= bindingInfo.actionID then
+						table.insert(updates, {
+							bindingInfo = bindingInfo,
+							ruleKey = SpellRanks.MakeBindingRuleKey(bindingInfo, rankEntry),
+							ruleMode = ruleMode,
+							currentEntry = rankEntry,
+							targetEntry = targetEntry,
+							spellName = rankEntry.name,
+							spellIcon = SpellRanks.GetSpellIconForAction(targetEntry.actionID) or SpellRanks.GetSpellIconForAction(bindingInfo.actionID),
+						})
+					end
 				end
 			end
 		end

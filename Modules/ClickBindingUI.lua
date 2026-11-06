@@ -467,9 +467,10 @@ function ClickBindingUI.QuickBindSpell(actionType, actionID, buttonName, modifie
 		modifiers = modifiers,
 	}
 
-	-- Wird im Zauberbuch gezielt ein niedrigerer Rang gebunden, wird dieser automatisch als "Fester Rang" gespeichert
+	-- Wird im Zauberbuch gezielt ein niedrigerer Rang gebunden, wird dieser automatisch als "Fester Rang" gespeichert;
+	-- bei Rang 1 (oder aktuellem Max-Rang) wird sofort "Immer MAX" verankert.
 	local rankEntry = SpellRanks.GetRankEntryForAction(actionID)
-	if rankEntry and rankEntry.group and #rankEntry.group.entries > 1 then
+	if rankEntry and rankEntry.group and (#rankEntry.group.entries > 1 or rankEntry.rankNum) then
 		local isMax = (rankEntry.group.maxEntry and rankEntry.group.maxEntry.actionID == actionID)
 		SpellRanks.SetRuleForBinding(newBindingInfo, isMax and SpellRanks.RULE_MAX or SpellRanks.RULE_FIXED, rankEntry)
 	end
@@ -1178,6 +1179,11 @@ local function ApplyRankToLine(lineFrame, elementData, subtext)
 
 	if lineFrame.Name then
 		lineFrame.Name:SetText(formattedName)
+	end
+
+	-- Smart-Regel auch für einzelne Rang-1-Zauber im Hintergrund initialisieren (Option A)
+	if Database.Get("enableSmartRankRules") and elementData.bindingInfo.button and rankEntry and (#rankEntry.group.entries > 1 or rankEntry.rankNum) then
+		SpellRanks.GetRuleForBinding(elementData.bindingInfo, rankEntry)
 	end
 
 	if rankBtn then

@@ -195,11 +195,25 @@ local function EnsureSpellBookQuickBindOverlay(spellBookItemFrame)
 		if not spellBookItemFrame.HasValidData or not spellBookItemFrame:HasValidData() then
 			return
 		end
-		if not spellBookItemFrame.inClickBindMode or not spellBookItemFrame.canClickBind then
+		if not spellBookItemFrame.inClickBindMode then
+			-- Außerhalb von /bcc liegt das Overlay als Hover-Schutz über bereits getainteten Zauberbuch-Slots:
+			-- Normale Zauberbuch-Klicks (Zauber wirken, Flyout, Pet-Autocast, Chat-Link) wie in SpellBookItemButtonMixin:OnClick weiterleiten.
+			if mouseButton == "LeftButton" or mouseButton == "RightButton" then
+				if IsModifiedClick and IsModifiedClick() then
+					if spellBookItemFrame.OnModifiedIconClick then
+						spellBookItemFrame:OnModifiedIconClick(mouseButton)
+					end
+				elseif spellBookItemFrame.OnIconClick then
+					spellBookItemFrame:OnIconClick(mouseButton)
+				end
+			end
+			return
+		end
+		if not spellBookItemFrame.canClickBind or spellBookItemFrame.isUnlearned then
 			return
 		end
 		local actionID = spellBookItemFrame.spellBookItemInfo and spellBookItemFrame.spellBookItemInfo.actionID
-		if not actionID or not ns.ClickBindingUI or not ns.ClickBindingUI.QuickBindSpell then
+		if not actionID then
 			return
 		end
 
@@ -209,13 +223,20 @@ local function EnsureSpellBookQuickBindOverlay(spellBookItemFrame)
 		elseif spellBookItemFrame.spellBank == Enum.SpellBookSpellBank.Pet then
 			actionType = Enum.ClickBindingType.PetAction
 		end
+		if not actionType then
+			return
+		end
 
-		if actionType then
-			local modifiers = (MakeModifiers and MakeModifiers()) or 0
-			ns.ClickBindingUI.QuickBindSpell(actionType, actionID, mouseButton, modifiers)
-			if GameTooltip and GameTooltip:IsOwned(spellBookItemFrame.Button) then
-				ShowQuickBindSpellBookTooltip(spellBookItemFrame)
+		if Database.Get("quickBindSpellbook") then
+			if ns.ClickBindingUI and ns.ClickBindingUI.QuickBindSpell then
+				local modifiers = (MakeModifiers and MakeModifiers()) or 0
+				ns.ClickBindingUI.QuickBindSpell(actionType, actionID, mouseButton, modifiers)
+				if GameTooltip and GameTooltip:IsOwned(spellBookItemFrame.Button) then
+					ShowQuickBindSpellBookTooltip(spellBookItemFrame)
+				end
 			end
+		elseif (mouseButton == "LeftButton" or mouseButton == "RightButton") and ClickBindingFrame and ClickBindingFrame.AddNewAction then
+			ClickBindingFrame:AddNewAction(actionType, actionID)
 		end
 	end)
 
@@ -300,51 +321,15 @@ function SpellBookUI.UpdateQuickBindCheckbox()
 	cb:SetShown(inClickBind)
 end
 
-local function HookSpellBookItemInstance(spellBookItemFrame)
-	if not spellBookItemFrame then
-		return
-	end
-	if not spellBookItemFrame._bccTooltipHooked and type(spellBookItemFrame.ShowSpellBookTooltip) == "function" then
-		if not SpellBookItemMixin or spellBookItemFrame.ShowSpellBookTooltip ~= SpellBookItemMixin.ShowSpellBookTooltip then
-			hooksecurefunc(spellBookItemFrame, "ShowSpellBookTooltip", function(self)
-				AppendSpellBookBindingTooltip(self)
-			end)
-		end
-		spellBookItemFrame._bccTooltipHooked = true
-	end
-	if not spellBookItemFrame._bccStateHooked and type(spellBookItemFrame.UpdateClickBindState) == "function" then
-		if not SpellBookItemMixin or spellBookItemFrame.UpdateClickBindState ~= SpellBookItemMixin.UpdateClickBindState then
-			hooksecurefunc(spellBookItemFrame, "UpdateClickBindState", function(self)
-				SpellBookUI.UpdateItemClickBindVisuals(self)
-			end)
-		end
-		spellBookItemFrame._bccStateHooked = true
-	end
-	if not spellBookItemFrame._bccClearHooked and type(spellBookItemFrame.ClearSpellData) == "function" then
-		if not SpellBookItemMixin or spellBookItemFrame.ClearSpellData ~= SpellBookItemMixin.ClearSpellData then
-			hooksecurefunc(spellBookItemFrame, "ClearSpellData", function(self)
-				if self.BCCBindBadge then
-					self.BCCBindBadge:Hide()
-				end
-				if self.BCCQuickBindButton then
-					self.BCCQuickBindButton:Hide()
-				end
-			end)
-		end
-		spellBookItemFrame._bccClearHooked = true
-	end
-end
-
 function SpellBookUI.UpdateItemClickBindVisuals(spellBookItemFrame, bindingsMap)
 	if not spellBookItemFrame then
 		return
 	end
-	HookSpellBookItemInstance(spellBookItemFrame)
 
 	local badgeFrame = EnsureSpellBookBindBadge(spellBookItemFrame)
 	local quickBindOverlay = EnsureSpellBookQuickBindOverlay(spellBookItemFrame)
 
-	if not spellBookItemFrame.HasValidData or not spellBookItemFrame:HasValidData() or spellBookItemFrame.isUnlearned then
+	if not spellBookItemFrame.HasValidData or not spellBookItemFrame:HasValidData() then
 		if badgeFrame then
 			badgeFrame:Hide()
 		end
@@ -355,10 +340,20 @@ function SpellBookUI.UpdateItemClickBindVisuals(spellBookItemFrame, bindingsMap)
 	end
 
 	local inClickBind = (InClickBindingMode and InClickBindingMode()) and true or false
-	local quickBindActive = inClickBind and Database.Get("quickBindSpellbook") and spellBookItemFrame.canClickBind
+	local quickBindActive = inClickBind and Database.Get("quickBindSpellbook") and spellBookItemFrame.canClickBind and not spellBookItemFrame.isUnlearned
+	local isItemTainted = false
+	if issecurevariable then
+		if (spellBookItemFrame.elementData ~= nil and not issecurevariable(spellBookItemFrame, "elementData"))
+			or (spellBookItemFrame.spellBookItemInfo ~= nil and not issecurevariable(spellBookItemFrame, "spellBookItemInfo")) then
+			isItemTainted = true
+		end
+	end
 
+	-- Im Click-Cast-Modus sowie auf allen bereits durch /bcc getainteten Zauberbuch-Slots liegt das Overlay
+	-- über dem Button, damit Blizzards OnIconEnter/OnIconLeave niemals auf einem getainteten Zauberbuch-Slot
+	-- ausgelöst wird und _G.PET_ACTION_HIGHLIGHT_MARKS sowie _G.ON_BAR_HIGHLIGHT_MARKS zu 100 % [SECURE] bleiben.
 	if quickBindOverlay then
-		quickBindOverlay:SetShown(quickBindActive and true or false)
+		quickBindOverlay:SetShown(inClickBind or isItemTainted)
 	end
 
 	-- Im 1-Klick-Direktbinde-Modus leuchten alle bindbaren Zauber im Zauberbuch
@@ -370,7 +365,7 @@ function SpellBookUI.UpdateItemClickBindVisuals(spellBookItemFrame, bindingsMap)
 		return
 	end
 
-	if not Database.Get("showSpellbookBadges") then
+	if spellBookItemFrame.isUnlearned or not Database.Get("showSpellbookBadges") then
 		badgeFrame:Hide()
 		return
 	end
@@ -433,44 +428,12 @@ function SpellBookUI.SetupHooks()
 		AppendSpellBookBindingTooltip(self)
 	end)
 
-	-- 2. Falls im Standard-Modus (Checkbox aus) im Zauberbuch geklickt wird, während NewSlot voll ist,
-	-- bestehenden ungebundenen Zauber behalten statt ihn zu überschreiben
-	hooksecurefunc(SpellBookItemMixin, "OnIconClick", function(self)
-		if Database.Get("quickBindSpellbook") then
-			return
-		end
-		if not self or not self.HasValidData or not self:HasValidData() then
-			return
-		end
-		if not self.inClickBindMode or not self.canClickBind or not ClickBindingFrame then
-			return
-		end
-		local actionID = self.spellBookItemInfo and self.spellBookItemInfo.actionID
-		if not actionID or ClickBindingFrame:HasNewSlot() then
-			return
-		end
-
-		local actionType = nil
-		if self.spellBank == Enum.SpellBookSpellBank.Player then
-			actionType = Enum.ClickBindingType.Spell
-		elseif self.spellBank == Enum.SpellBookSpellBank.Pet then
-			actionType = Enum.ClickBindingType.PetAction
-		end
-
-		if actionType and ClickBindingFrame.AddNewAction then
-			ClickBindingFrame:AddNewAction(actionType, actionID)
-		end
-	end)
-
-	-- 3. EventRegistry-Callbacks des Zauberbuchs (deckt auch bereits vorab erzeugte Pool-Frames ab)
+	-- 2. EventRegistry-Callbacks des Zauberbuchs (deckt auch bereits vorab erzeugte Pool-Frames ab)
 	if EventRegistry and EventRegistry.RegisterCallback then
 		EventRegistry:RegisterCallback("PlayerSpellsFrame.SpellBookFrame.DisplayedSpellsChanged", function()
 			SpellBookUI.RefreshBadges()
 		end, ns)
 		EventRegistry:RegisterCallback("PlayerSpellsFrame.SpellBookFrame.Show", function()
-			if ns.ClickBindingUI and ns.ClickBindingUI.SyncAutoShowAllRanks then
-				ns.ClickBindingUI.SyncAutoShowAllRanks()
-			end
 			SpellBookUI.RefreshBadges()
 		end, ns)
 	end

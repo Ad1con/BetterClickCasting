@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.3] (2026-11-06)
+### Fixed
+- **Complete Spellbook Hover Taint Protection (`_G.PET_ACTION_HIGHLIGHT_MARKS` & `PetActionBar:SetShownBase()`):**
+  - Extended `BCCQuickBindButton` so it shields all valid `SpellBookItem` slots (including passive spells, unlearned spells, and when 1-Click Direct Bind is disabled) while `ClickBindingFrame` is open, as well as any `SpellBookItem` slots whose `elementData` was initialized while opening `ClickBindingFrame` via `/bcc` or the Minimap button.
+  - Outside of Click Binding mode, clicks on shielded `SpellBookItem` slots cleanly forward to `OnModifiedIconClick` and `OnIconClick` while keeping `_G.PET_ACTION_HIGHLIGHT_MARKS` and `_G.ON_BAR_HIGHLIGHT_MARKS` 100% untainted during combat target changes (`TargetNearestEnemy`).
+  - Moved the automatic *"Show All Spell Ranks"* CVar sync (`ShowAllSpellRanks = 1`) to login/addon load instead of calling `UpdateDisplayedSpells(true, false)` during `ClickBindingFrame:OnShow`.
+- **Enhanced `/bcc debug` Diagnostics:**
+  - Added a copyable `Ctrl+C` dialog popup (`/bcc debug` on findings or `/bcc debug copy`), `SpellBookFrame` element taint inspection, and status reporting for overlay-shielded Spellbook items.
+
 ## [0.4.2] (2026-11-06)
 ### Fixed
 - **Rank 1 -> Rank 2 Smart Rule Initialization:** Bound spells that currently only have `Rank 1` learned in the Spellbook are now automatically initialized with the **Always MAX** rule in the background. When learning `Rank 2` at a class trainer later, the Upgrade Hero-Card reliably appears so you can upgrade immediately or switch to **Fixed Rank** via *"Keep Current Ranks"*.

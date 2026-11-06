@@ -26,6 +26,9 @@ loaderFrame:SetScript("OnEvent", function(self, event, arg1)
 		if arg1 == addonName or arg1 == "BetterClickCasting" or arg1 == "BetterClickCastings" then
 			Database.Init()
 			MinimapButton.Init()
+			if ClickBindingUI and ClickBindingUI.SyncAutoShowAllRanks then
+				ClickBindingUI.SyncAutoShowAllRanks()
+			end
 		end
 		-- Wichtig: Nicht während arg1 == "Blizzard_MacroUI" aufrufen, da MacroFrame_LoadUI() mitten in
 		-- ClickBindingFrameMixin:OnLoad() läuft, noch bevor self:InitializeScrollBox() die ScrollBox-View erzeugt hat.
@@ -38,6 +41,9 @@ loaderFrame:SetScript("OnEvent", function(self, event, arg1)
 	elseif event == "PLAYER_LOGIN" then
 		Database.Init()
 		MinimapButton.Init()
+		if ClickBindingUI and ClickBindingUI.SyncAutoShowAllRanks then
+			ClickBindingUI.SyncAutoShowAllRanks()
+		end
 		if ClickBindingFrame then
 			ClickBindingUI.SetupHooks()
 		end

@@ -13,7 +13,6 @@ local ClickBindingUI = {}
 ns.ClickBindingUI = ClickBindingUI
 
 local isHooked = false
-local restoredAllRanksOnClose = false
 local isRebuildingGroups = false
 local heroCardFrame = nil
 local dismissedSignature = nil
@@ -1722,6 +1721,61 @@ function ClickBindingUI.PrepareSmartRuleTest()
 	end
 end
 
+local debugCopyFrame = nil
+
+local function ShowDebugCopyPopup(reportText)
+	if not debugCopyFrame then
+		local f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+		f:SetSize(520, 210)
+		f:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
+		f:SetFrameStrata("DIALOG")
+		f:SetFrameLevel(200)
+		f:EnableMouse(true)
+		f:SetMovable(true)
+		f:RegisterForDrag("LeftButton")
+		f:SetScript("OnDragStart", f.StartMoving)
+		f:SetScript("OnDragStop", f.StopMovingOrSizing)
+		if f.SetBackdrop then
+			f:SetBackdrop({
+				bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+				edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+				tile = true,
+				tileSize = 32,
+				edgeSize = 24,
+				insets = { left = 6, right = 6, top = 6, bottom = 6 },
+			})
+		end
+
+		local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+		title:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -14)
+		title:SetText("Better Click Casting Debug (Strg+C zum Kopieren)")
+
+		local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+		closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+
+		local scrollFrame = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+		scrollFrame:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -42)
+		scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -34, 16)
+
+		local editBox = CreateFrame("EditBox", nil, scrollFrame)
+		editBox:SetMultiLine(true)
+		editBox:SetAutoFocus(false)
+		editBox:SetFontObject(ChatFontNormal or GameFontHighlightSmall)
+		editBox:SetWidth(460)
+		editBox:SetScript("OnEscapePressed", function()
+			f:Hide()
+		end)
+		scrollFrame:SetScrollChild(editBox)
+		f.EditBox = editBox
+		debugCopyFrame = f
+	end
+
+	debugCopyFrame:Show()
+	debugCopyFrame.EditBox:SetText(reportText or "")
+	debugCopyFrame.EditBox:SetFocus()
+	debugCopyFrame.EditBox:HighlightText()
+end
+
 -- Diagnose-Werkzeug (/bcc debug, /bcc debug taintlog):
 -- Prüft mit Blizzards issecurevariable() sofort außerhalb des Kampfes, ob globale Highlight-Tabellen,
 -- Aktionsleisten (inkl. PetActionBar), EditModeManagerFrame oder PlayerSpellsFrame getaintete Felder besitzen.
@@ -1820,35 +1874,92 @@ function ClickBindingUI.RunTaintDiagnostics(subArg)
 		end
 	end
 
-	-- 3. EditModeManagerFrame und PlayerSpellsFrame prüfen
+	-- 3. EditModeManagerFrame, PlayerSpellsFrame und SpellBookFrame prüfen
 	if _G.EditModeManagerFrame then
 		checkVar(_G.EditModeManagerFrame, "layoutApplyInProgress", "EditModeManagerFrame")
 	end
+	local infoNotes = {}
 	if _G.PlayerSpellsFrame then
 		checkVar(_G.PlayerSpellsFrame, "isMinimized", "PlayerSpellsFrame")
 		checkVar(_G.PlayerSpellsFrame, "minimizedOnNextShow", "PlayerSpellsFrame")
+		local sbFrame = _G.PlayerSpellsFrame.SpellBookFrame
+		if sbFrame then
+			local sbKeys = { "spellDataDirty", "isUpdatingAllSpellData", "categoryMixins" }
+			for _, k in ipairs(sbKeys) do
+				if sbFrame[k] ~= nil then
+					checkVar(sbFrame, k, "SpellBookFrame")
+				end
+			end
+			if sbFrame.lastActiveTabID ~= nil then
+				local okTab, srcTab = issecurevariable(sbFrame, "lastActiveTabID")
+				if not okTab then
+					table.insert(infoNotes, string.format("SpellBookFrame.lastActiveTabID (von %s, harmlos)", tostring(srcTab or "unbekannt")))
+				end
+			end
+			if sbFrame.PagedSpellsFrame and sbFrame.PagedSpellsFrame.EnumerateFrames then
+				local taintedItems = 0
+				local shieldedItems = 0
+				local firstTaintSource = nil
+				for _, itemFrame in sbFrame.PagedSpellsFrame:EnumerateFrames() do
+					if itemFrame and itemFrame.elementData ~= nil then
+						local okElem, srcElem = issecurevariable(itemFrame, "elementData")
+						if not okElem then
+							taintedItems = taintedItems + 1
+							if itemFrame.BCCQuickBindButton and itemFrame.BCCQuickBindButton:IsShown() then
+								shieldedItems = shieldedItems + 1
+							end
+							firstTaintSource = firstTaintSource or srcElem
+						end
+					end
+				end
+				if taintedItems > 0 then
+					local itemSummary = string.format("SpellBookFrame.PagedSpellsFrame: %d Item(s) mit getaintetem elementData (%d durch Overlay abgeschirmt, von %s)", taintedItems, shieldedItems, tostring(firstTaintSource or "unbekannt"))
+					if shieldedItems < taintedItems then
+						table.insert(findings, itemSummary)
+					else
+						table.insert(infoNotes, itemSummary)
+					end
+				end
+			end
+		end
 	end
 
 	local taintLogVal = (GetCVar and GetCVar("taintLog")) or "0"
+	local reportLines = {}
 	if #findings == 0 then
-		DEFAULT_CHAT_FRAME:AddMessage("|cff40ff40Better Click Casting (Debug):|r 0 Taints auf PetActionBar, ActionBars, EditModeManagerFrame und Highlight-Globals gefunden! (taintLog=" .. tostring(taintLogVal) .. ")")
+		local okMsg = string.format("0 kritische Taints auf PetActionBar, ActionBars, EditModeManagerFrame und Highlight-Globals gefunden! (taintLog=%s)", tostring(taintLogVal))
+		DEFAULT_CHAT_FRAME:AddMessage("|cff40ff40Better Click Casting (Debug):|r " .. okMsg)
+		table.insert(reportLines, okMsg)
+		for _, note in ipairs(infoNotes) do
+			DEFAULT_CHAT_FRAME:AddMessage("  |cff80c0ff• Info:|r " .. note)
+			table.insert(reportLines, "- Info: " .. note)
+		end
 	else
-		DEFAULT_CHAT_FRAME:AddMessage("|cffff4040Better Click Casting (Debug):|r " .. tostring(#findings) .. " getaintete(s) Feld(er) gefunden (taintLog=" .. tostring(taintLogVal) .. "):")
+		local headerMsg = string.format("%d getaintete(s) Feld(er) gefunden (taintLog=%s):", #findings, tostring(taintLogVal))
+		DEFAULT_CHAT_FRAME:AddMessage("|cffff4040Better Click Casting (Debug):|r " .. headerMsg)
+		table.insert(reportLines, headerMsg)
 		for _, line in ipairs(findings) do
 			DEFAULT_CHAT_FRAME:AddMessage("  |cffffb833•|r " .. line)
+			table.insert(reportLines, "- " .. line)
 		end
+		for _, note in ipairs(infoNotes) do
+			DEFAULT_CHAT_FRAME:AddMessage("  |cff80c0ff• Info:|r " .. note)
+			table.insert(reportLines, "- Info: " .. note)
+		end
+	end
+
+	local fullReport = table.concat(reportLines, "\n")
+	if type(BetterClickCastingDB) == "table" then
+		BetterClickCastingDB.lastDebugReport = fullReport
+	end
+	if #findings > 0 or subArg == "copy" then
+		ShowDebugCopyPopup(fullReport)
 	end
 end
 
 --------------------------------------------------------------------------------
 -- Zauberbuch-Sync und Hooks
 --------------------------------------------------------------------------------
-
-local function RefreshSpellBookRanksDisplay()
-	if PlayerSpellsFrame and PlayerSpellsFrame.SpellBookFrame and PlayerSpellsFrame.SpellBookFrame.UpdateDisplayedSpells then
-		PlayerSpellsFrame.SpellBookFrame:UpdateDisplayedSpells(true, false)
-	end
-end
 
 function ClickBindingUI.EnsureSpellBookTabForClickBinding()
 	if InCombatLockdown and InCombatLockdown() then
@@ -1882,26 +1993,14 @@ function ClickBindingUI.SyncAutoShowAllRanks()
 	if InCombatLockdown and InCombatLockdown() then
 		return
 	end
-	if not ClickBindingFrame or not GetCVarBool or not SetCVar then
+	if not GetCVarBool or not SetCVar then
 		return
 	end
-
-	if ClickBindingFrame:IsShown() then
-		if Database.Get("autoShowAllRanks") then
-			if not GetCVarBool("ShowAllSpellRanks") then
-				restoredAllRanksOnClose = true
-				SetCVar("ShowAllSpellRanks", 1)
-				RefreshSpellBookRanksDisplay()
-			end
-		elseif restoredAllRanksOnClose then
-			restoredAllRanksOnClose = false
-			SetCVar("ShowAllSpellRanks", 0)
-			RefreshSpellBookRanksDisplay()
-		end
-	elseif restoredAllRanksOnClose then
-		restoredAllRanksOnClose = false
-		SetCVar("ShowAllSpellRanks", 0)
-		RefreshSpellBookRanksDisplay()
+	-- Wichtig: Niemals PlayerSpellsFrame.SpellBookFrame:UpdateDisplayedSpells(true, false) aus AddOn-Code aufrufen,
+	-- da dies den DataProvider des Zauberbuchs taintet und beim Hover über Zauber im Zauberbuch via
+	-- PetActionBar:ClearPetActionHighlightMarks() das globale _G.PET_ACTION_HIGHLIGHT_MARKS infiziert.
+	if Database.Get("autoShowAllRanks") and not GetCVarBool("ShowAllSpellRanks") then
+		SetCVar("ShowAllSpellRanks", 1)
 	end
 end
 
@@ -1940,7 +2039,6 @@ function ClickBindingUI.SetupHooks()
 
 	ClickBindingFrame:HookScript("OnHide", function()
 		SetSaveButtonGlowShown(false)
-		ClickBindingUI.SyncAutoShowAllRanks()
 		if SpellBookUI and SpellBookUI.RefreshBadges then
 			SpellBookUI.RefreshBadges()
 		end

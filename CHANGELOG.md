@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0] (2026-11-06)
+### Added
+- **Smart Rank Rules (Per Binding):**
+  - Assign automatic rank rules per binding in the inline rank dropdown: **Always MAX**, **Always MAX - 1**, **Always MAX - 2**, **Always MAX - 3**, or **Fixed Rank (No Auto-Update)**.
+  - Existing max-rank bindings automatically start with **Always MAX**, while intentional downranks start as **Fixed Rank**.
+- **Rank Update Hero-Card:**
+  - When learning new spell ranks at your class trainer (or on login/reload with pending Smart Rule updates), a movable Blizzard-styled notification card displays all affected bindings and their rank transitions.
+  - **Open & Upgrade:** Opens Click Cast Bindings, applies the new ranks from your Smart Rules, and highlights the **Save** button in gold.
+  - **Keep Current Ranks:** Locks the listed bindings to their current fixed rank (**Fixed Rule**) so the reminder won't appear again for them.
+  - Remembers its screen position when dragged.
+
 ## [0.3.1] (2026-11-06)
 ### Fixed
 - **Spellbook vs. Talent Tree Tab Fix:** Opening Click Cast Bindings after viewing the Talent Tree (`N`) now automatically switches `PlayerSpellsFrame` back to the **SpellBook** tab instead of opening the Talent Tree in the center of the screen and closing `ClickBindingFrame`.

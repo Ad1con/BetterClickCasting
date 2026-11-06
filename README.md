@@ -20,6 +20,7 @@ Sadly, the menu never got any love from Blizzard.
 * **Visible Spell Ranks:** Shows the exact bound rank right next to every spell name, such as **Flash Heal (Rank 4)**.
 * **Max-Rank & Downrank Detection:** Marks spells at your highest learned rank with a green **[MAX]** tag and highlights lower ranks in orange with a max-rank hint like **(Rank 2 / Max 4)**.
 * **Inline Rank Switcher:** Switch between all learned ranks directly inside the Click Cast row via a compact dropdown (including mana costs and tooltips), or **Right-Click** the rank button to jump straight to **MAX** without re-binding your mouse button.
+* **Smart Rank Rules & Upgrade Reminder:** Assign rules per binding (**Always MAX**, **Always MAX - 1**, **Always MAX - 2**, **Always MAX - 3**, or **Fixed Rank**). When you learn a new spell rank at your class trainer, a compact notification card lets you open and apply all rank updates (or lock your current ranks) in one click.
 * **1-Click Upgrade All:** After visiting your class trainer, upgrade all bound spells to their highest learned rank at once from the settings menu.
 * **Clean Grouping & Sorting:** Organize custom bindings by **Modifier** (Direct, Shift, Ctrl, Alt), **Mouse Button** (LMB, RMB, MMB, MB4, MB5), **Action Type** (Spells, Pet Actions, Macros), or keep a logically sorted list.
 * **1-Click Direct Bind in the Spellbook:** Enable **1-Click Direct Bind** at the bottom-left of your Spellbook while the Click Cast window is open to bind any spell immediately by clicking it with your desired mouse button or modifier.

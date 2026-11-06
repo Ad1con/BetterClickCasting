@@ -12,6 +12,7 @@ local DEFAULTS = {
 	quickBindSpellbook = true,
 	showSpellbookBadges = true,
 	autoShowAllRanks = true,
+	enableSmartRankRules = true,
 	showMinimapButton = true,
 	minimapAngle = 225,
 }
@@ -29,6 +30,9 @@ function Database.Init()
 		if BetterClickCastingDB[k] == nil then
 			BetterClickCastingDB[k] = v
 		end
+	end
+	if type(BetterClickCastingDB.rankRules) ~= "table" then
+		BetterClickCastingDB.rankRules = {}
 	end
 	BetterClickCastingsDB = BetterClickCastingDB
 	return BetterClickCastingDB
@@ -66,6 +70,9 @@ function Database.NotifyChanged(key, value)
 		end
 		if key == "groupingMode" and ns.ClickBindingUI.RebuildGroups then
 			ns.ClickBindingUI.RebuildGroups()
+		end
+		if key == "enableSmartRankRules" and ns.ClickBindingUI.ScheduleSmartRuleCheck then
+			ns.ClickBindingUI.ScheduleSmartRuleCheck(0.1)
 		end
 		if ns.ClickBindingUI.RefreshVisibleLines then
 			ns.ClickBindingUI.RefreshVisibleLines()

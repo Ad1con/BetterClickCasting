@@ -92,6 +92,7 @@ function SettingsUI.OpenSettingsMenu(ownerRegion)
 		AddSettingCheckbox(rootDescription, "showRankInName", "SETTING_SHOW_RANK_IN_NAME", "SETTING_SHOW_RANK_IN_NAME_DESC")
 		AddSettingCheckbox(rootDescription, "highlightDownranks", "SETTING_HIGHLIGHT_DOWNRANKS", "SETTING_HIGHLIGHT_DOWNRANKS_DESC")
 		AddSettingCheckbox(rootDescription, "showRankSwitcher", "SETTING_SHOW_RANK_SWITCHER", "SETTING_SHOW_RANK_SWITCHER_DESC")
+		AddSettingCheckbox(rootDescription, "enableSmartRankRules", "SETTING_ENABLE_SMART_RULES", "SETTING_ENABLE_SMART_RULES_DESC")
 		AddSettingCheckbox(rootDescription, "showLineTooltips", "SETTING_SHOW_LINE_TOOLTIPS", "SETTING_SHOW_LINE_TOOLTIPS_DESC")
 
 		-- Sektion 2: Zauberbuch

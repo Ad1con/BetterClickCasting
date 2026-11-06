@@ -1,9 +1,24 @@
 local _, ns = ...
 
 local Constants = ns.Constants
+local Database = ns.Database
 
 local SpellRanks = {}
 ns.SpellRanks = SpellRanks
+
+SpellRanks.RULE_MAX = "MAX"
+SpellRanks.RULE_MAX_MINUS_1 = "MAX_MINUS_1"
+SpellRanks.RULE_MAX_MINUS_2 = "MAX_MINUS_2"
+SpellRanks.RULE_MAX_MINUS_3 = "MAX_MINUS_3"
+SpellRanks.RULE_FIXED = "FIXED"
+
+local VALID_RULES = {
+	[SpellRanks.RULE_MAX] = true,
+	[SpellRanks.RULE_MAX_MINUS_1] = true,
+	[SpellRanks.RULE_MAX_MINUS_2] = true,
+	[SpellRanks.RULE_MAX_MINUS_3] = true,
+	[SpellRanks.RULE_FIXED] = true,
+}
 
 local cache = {
 	dirty = true,
@@ -69,6 +84,21 @@ function SpellRanks.GetSpellBaseNameForAction(actionID)
 
 	local spellInfo = C_Spell.GetSpellInfo(spellIDToQuery)
 	return spellInfo and spellInfo.name or nil
+end
+
+function SpellRanks.GetSpellIconForAction(actionID)
+	if not actionID or not C_Spell or not C_Spell.GetSpellInfo then
+		return nil
+	end
+	local spellIDToQuery = actionID
+	if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
+		local overrideID = C_SpellBook.FindSpellOverrideByID(actionID)
+		if overrideID then
+			spellIDToQuery = overrideID
+		end
+	end
+	local spellInfo = C_Spell.GetSpellInfo(spellIDToQuery)
+	return spellInfo and spellInfo.iconID or nil
 end
 
 function SpellRanks.GetSpellPowerCostString(spellID)
@@ -242,6 +272,144 @@ function SpellRanks.GetRankEntryForAction(actionID)
 	end
 
 	return nil
+end
+
+--------------------------------------------------------------------------------
+-- Smarte Rang-Regeln (Immer MAX, Immer MAX - N, Fester Rang)
+--------------------------------------------------------------------------------
+
+function SpellRanks.MakeBindingRuleKey(bindingInfo, rankEntry)
+	if not bindingInfo or not bindingInfo.button or not Constants.IsSpellOrPetBinding(bindingInfo) then
+		return nil
+	end
+	rankEntry = rankEntry or SpellRanks.GetRankEntryForAction(bindingInfo.actionID)
+	local spellName = (rankEntry and rankEntry.name) or SpellRanks.GetSpellBaseNameForAction(bindingInfo.actionID)
+	if not spellName or spellName == "" then
+		return nil
+	end
+	local spellBank = (rankEntry and rankEntry.spellBank) or 0
+	local charName = (UnitName and UnitName("player")) or "Player"
+	local realmName = (GetRealmName and GetRealmName()) or "Realm"
+	local modNum = tonumber(bindingInfo.modifiers) or 0
+
+	return string.format("%s-%s|%d:%s|%s:%s", charName, realmName, modNum, tostring(bindingInfo.button), tostring(spellBank), spellName)
+end
+
+function SpellRanks.GetRuleForBinding(bindingInfo, rankEntry)
+	rankEntry = rankEntry or (bindingInfo and SpellRanks.GetRankEntryForAction(bindingInfo.actionID))
+	if not rankEntry or not rankEntry.group or #rankEntry.group.entries <= 1 then
+		return SpellRanks.RULE_FIXED
+	end
+
+	local key = SpellRanks.MakeBindingRuleKey(bindingInfo, rankEntry)
+	if not key then
+		return SpellRanks.RULE_FIXED
+	end
+
+	if type(BetterClickCastingDB) ~= "table" then
+		Database.Init()
+	end
+	local rules = BetterClickCastingDB.rankRules
+	if type(rules) ~= "table" then
+		rules = {}
+		BetterClickCastingDB.rankRules = rules
+	end
+
+	local saved = rules[key]
+	if saved and VALID_RULES[saved] then
+		return saved
+	end
+
+	-- Smart-Hybrid (Option A): Bestehende Max-Rang-Belegungen starten als "Immer MAX",
+	-- bereits bestehende Downranks starten als "Fester Rang", damit beim ersten Login
+	-- nach der Installation kein unerwartetes Popup für gewollte Downranks erscheint.
+	local isCurrentlyMax = (rankEntry.group.maxEntry and rankEntry.group.maxEntry.actionID == bindingInfo.actionID)
+	local initialRule = isCurrentlyMax and SpellRanks.RULE_MAX or SpellRanks.RULE_FIXED
+	rules[key] = initialRule
+	return initialRule
+end
+
+function SpellRanks.SetRuleForBinding(bindingInfo, ruleMode, rankEntry)
+	if not VALID_RULES[ruleMode] then
+		return
+	end
+	local key = SpellRanks.MakeBindingRuleKey(bindingInfo, rankEntry)
+	if not key then
+		return
+	end
+	if type(BetterClickCastingDB) ~= "table" then
+		Database.Init()
+	end
+	if type(BetterClickCastingDB.rankRules) ~= "table" then
+		BetterClickCastingDB.rankRules = {}
+	end
+	BetterClickCastingDB.rankRules[key] = ruleMode
+end
+
+function SpellRanks.GetTargetEntryForRule(group, ruleMode)
+	if not group or not group.entries or #group.entries <= 1 then
+		return nil
+	end
+	if not ruleMode or ruleMode == SpellRanks.RULE_FIXED then
+		return nil
+	end
+
+	local maxEntry = group.maxEntry or group.entries[#group.entries]
+	if not maxEntry then
+		return nil
+	end
+
+	local maxIndex = maxEntry.rankIndex or #group.entries
+	local offset = 0
+	if ruleMode == SpellRanks.RULE_MAX_MINUS_1 then
+		offset = 1
+	elseif ruleMode == SpellRanks.RULE_MAX_MINUS_2 then
+		offset = 2
+	elseif ruleMode == SpellRanks.RULE_MAX_MINUS_3 then
+		offset = 3
+	end
+
+	-- 3-Punkte-Randwert-Sicherung: Niemals unter Index 1 (Rang 1) fallen
+	local targetIndex = math.max(1, maxIndex - offset)
+	return group.entries[targetIndex] or maxEntry
+end
+
+function SpellRanks.GetPendingSmartRuleUpdates()
+	local updates = {}
+	if not Database.Get("enableSmartRankRules") then
+		return updates
+	end
+	if not C_ClickBindings or not C_ClickBindings.GetProfileInfo then
+		return updates
+	end
+
+	local profile = C_ClickBindings.GetProfileInfo()
+	if type(profile) ~= "table" then
+		return updates
+	end
+
+	for _, bindingInfo in ipairs(profile) do
+		if bindingInfo and bindingInfo.button and bindingInfo.actionID and Constants.IsSpellOrPetBinding(bindingInfo) then
+			local rankEntry = SpellRanks.GetRankEntryForAction(bindingInfo.actionID)
+			if rankEntry and rankEntry.group and #rankEntry.group.entries > 1 then
+				local ruleMode = SpellRanks.GetRuleForBinding(bindingInfo, rankEntry)
+				local targetEntry = SpellRanks.GetTargetEntryForRule(rankEntry.group, ruleMode)
+				if targetEntry and targetEntry.actionID and targetEntry.actionID ~= bindingInfo.actionID then
+					table.insert(updates, {
+						bindingInfo = bindingInfo,
+						ruleKey = SpellRanks.MakeBindingRuleKey(bindingInfo, rankEntry),
+						ruleMode = ruleMode,
+						currentEntry = rankEntry,
+						targetEntry = targetEntry,
+						spellName = rankEntry.name,
+						spellIcon = SpellRanks.GetSpellIconForAction(targetEntry.actionID) or SpellRanks.GetSpellIconForAction(bindingInfo.actionID),
+					})
+				end
+			end
+		end
+	end
+
+	return updates
 end
 
 function SpellRanks.GetActiveBindingsByActionID()

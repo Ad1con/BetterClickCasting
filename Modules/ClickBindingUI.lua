@@ -15,6 +15,39 @@ ns.ClickBindingUI = ClickBindingUI
 local isHooked = false
 local restoredAllRanksOnClose = false
 local isRebuildingGroups = false
+local heroCardFrame = nil
+local dismissedSignature = nil
+local smartCheckPending = false
+
+local SMART_RULE_OPTIONS = {
+	{ mode = SpellRanks.RULE_MAX,         labelKey = "SMART_RULE_MAX" },
+	{ mode = SpellRanks.RULE_MAX_MINUS_1, labelKey = "SMART_RULE_MAX_MINUS_1" },
+	{ mode = SpellRanks.RULE_MAX_MINUS_2, labelKey = "SMART_RULE_MAX_MINUS_2" },
+	{ mode = SpellRanks.RULE_MAX_MINUS_3, labelKey = "SMART_RULE_MAX_MINUS_3" },
+	{ mode = SpellRanks.RULE_FIXED,       labelKey = "SMART_RULE_FIXED" },
+}
+
+local function GetRuleDisplayName(ruleMode)
+	for _, opt in ipairs(SMART_RULE_OPTIONS) do
+		if opt.mode == ruleMode then
+			return L[opt.labelKey]
+		end
+	end
+	return L["SMART_RULE_MAX"]
+end
+
+local function GetRuleShortTag(ruleMode, isMaxRank)
+	if ruleMode == SpellRanks.RULE_MAX_MINUS_1 then
+		return L["TAG_RULE_M1_SHORT"]
+	elseif ruleMode == SpellRanks.RULE_MAX_MINUS_2 then
+		return L["TAG_RULE_M2_SHORT"]
+	elseif ruleMode == SpellRanks.RULE_MAX_MINUS_3 then
+		return L["TAG_RULE_M3_SHORT"]
+	elseif ruleMode == SpellRanks.RULE_FIXED then
+		return isMaxRank and L["TAG_MAX_SHORT"] or L["TAG_RULE_FIX_SHORT"]
+	end
+	return L["TAG_MAX_SHORT"]
+end
 
 --------------------------------------------------------------------------------
 -- Logische Gruppierung und Sortierung im ClickBindingFrame
@@ -283,14 +316,63 @@ function ClickBindingUI.RebuildGroups()
 end
 
 --------------------------------------------------------------------------------
+-- Visuelles Highlight auf Blizzards Speichern-Button (bei Smart-Rule-Updates)
+--------------------------------------------------------------------------------
+
+local function SetSaveButtonGlowShown(shown)
+	if not ClickBindingFrame or not ClickBindingFrame.SaveButton then
+		return
+	end
+	local saveBtn = ClickBindingFrame.SaveButton
+	if shown and not saveBtn.BCCGlowFrame then
+		local glowFrame = CreateFrame("Frame", nil, saveBtn)
+		glowFrame:SetAllPoints(saveBtn)
+		glowFrame:SetFrameLevel(saveBtn:GetFrameLevel() + 2)
+
+		local tex = glowFrame:CreateTexture(nil, "OVERLAY")
+		tex:SetAtlas("newplayertutorial-drag-slotblue")
+		tex:SetBlendMode("ADD")
+		tex:SetVertexColor(1.0, 0.82, 0.15, 0.85)
+		tex:SetPoint("TOPLEFT", -6, 6)
+		tex:SetPoint("BOTTOMRIGHT", 6, -6)
+		glowFrame.Tex = tex
+
+		local hint = glowFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+		hint:SetPoint("BOTTOMRIGHT", saveBtn, "TOPRIGHT", 0, 5)
+		hint:SetText(Colors.HEADER_SUB .. L["SAVE_BUTTON_GLOW_HINT"] .. Colors.RESET)
+		glowFrame.Hint = hint
+
+		saveBtn.BCCGlowFrame = glowFrame
+	end
+	if saveBtn.BCCGlowFrame then
+		saveBtn.BCCGlowFrame:SetShown(shown and true or false)
+	end
+end
+
+--------------------------------------------------------------------------------
 -- Rang einer bestehenden Zeile ändern (ohne Taste neu zu binden)
 --------------------------------------------------------------------------------
 
-local function SetLineSpellRank(lineFrame, elementData, newActionID)
+local function SetLineSpellRank(lineFrame, elementData, newActionID, explicitRuleMode)
 	if not lineFrame or not elementData or not elementData.bindingInfo or not newActionID then
 		return
 	end
+
+	local rankEntry = SpellRanks.GetRankEntryForAction(newActionID)
+	if explicitRuleMode then
+		SpellRanks.SetRuleForBinding(elementData.bindingInfo, explicitRuleMode, rankEntry)
+	elseif rankEntry and rankEntry.group and rankEntry.group.maxEntry then
+		-- Manueller Klick auf einen spezifischen Rang setzt bei Max-Rang "Immer MAX", sonst "Fester Rang"
+		if rankEntry.group.maxEntry.actionID == newActionID then
+			SpellRanks.SetRuleForBinding(elementData.bindingInfo, SpellRanks.RULE_MAX, rankEntry)
+		else
+			SpellRanks.SetRuleForBinding(elementData.bindingInfo, SpellRanks.RULE_FIXED, rankEntry)
+		end
+	end
+
 	if elementData.bindingInfo.actionID == newActionID then
+		ClickBindingUI.UpdateLineWithRank(lineFrame, elementData)
+		ClickBindingUI.ScheduleSmartRuleCheck(0.1)
 		return
 	end
 
@@ -317,6 +399,7 @@ local function SetLineSpellRank(lineFrame, elementData, newActionID)
 	if SpellBookUI and SpellBookUI.RefreshBadges then
 		SpellBookUI.RefreshBadges()
 	end
+	ClickBindingUI.ScheduleSmartRuleCheck(0.1)
 end
 
 --------------------------------------------------------------------------------
@@ -377,13 +460,22 @@ function ClickBindingUI.QuickBindSpell(actionType, actionID, buttonName, modifie
 		targetElement = ClickBindingFrame:GetLastElement()
 	end
 
+	local newBindingInfo = {
+		type = actionType,
+		actionID = actionID,
+		button = buttonName,
+		modifiers = modifiers,
+	}
+
+	-- Wird im Zauberbuch gezielt ein niedrigerer Rang gebunden, wird dieser automatisch als "Fester Rang" gespeichert
+	local rankEntry = SpellRanks.GetRankEntryForAction(actionID)
+	if rankEntry and rankEntry.group and #rankEntry.group.entries > 1 then
+		local isMax = (rankEntry.group.maxEntry and rankEntry.group.maxEntry.actionID == actionID)
+		SpellRanks.SetRuleForBinding(newBindingInfo, isMax and SpellRanks.RULE_MAX or SpellRanks.RULE_FIXED, rankEntry)
+	end
+
 	if targetElement then
-		targetElement.bindingInfo = {
-			type = actionType,
-			actionID = actionID,
-			button = buttonName,
-			modifiers = modifiers,
-		}
+		targetElement.bindingInfo = newBindingInfo
 		targetElement.unbound = false
 		if targetElement.elementType == ElementDataTypes.NewSlot then
 			targetElement.elementType = ElementDataTypes.CustomsBinding
@@ -394,12 +486,7 @@ function ClickBindingUI.QuickBindSpell(actionType, actionID, buttonName, modifie
 	else
 		ClickBindingFrame.dataProvider:Insert({
 			elementType = ElementDataTypes.CustomsBinding,
-			bindingInfo = {
-				type = actionType,
-				actionID = actionID,
-				button = buttonName,
-				modifiers = modifiers,
-			},
+			bindingInfo = newBindingInfo,
 			unbound = false,
 		})
 	end
@@ -450,6 +537,7 @@ function ClickBindingUI.UpgradeAllBindingsToMaxRank()
 			local maxEntry = rankEntry and rankEntry.group and rankEntry.group.maxEntry
 			if maxEntry and maxEntry.actionID ~= info.actionID then
 				info.actionID = maxEntry.actionID
+				SpellRanks.SetRuleForBinding(info, SpellRanks.RULE_MAX, maxEntry)
 				upgraded = upgraded + 1
 			end
 		end
@@ -462,6 +550,7 @@ function ClickBindingUI.UpgradeAllBindingsToMaxRank()
 		end
 		ClickBindingUI.RebuildGroups()
 		ClickBindingFrame.pendingChanges = true
+		SetSaveButtonGlowShown(true)
 		ClickBindingUI.RefreshVisibleLines()
 		if EventRegistry and EventRegistry.TriggerEvent then
 			EventRegistry:TriggerEvent("ClickBindingFrame.UpdateFrames")
@@ -476,6 +565,52 @@ function ClickBindingUI.UpgradeAllBindingsToMaxRank()
 	return upgraded
 end
 
+function ClickBindingUI.ApplySmartRulesToDataProvider(silentChat)
+	if not Database.Get("enableSmartRankRules") then
+		return 0
+	end
+	if not ClickBindingFrame or not ClickBindingFrame.dataProvider then
+		return 0
+	end
+
+	local updated = 0
+	for _, element in ClickBindingFrame.dataProvider:Enumerate() do
+		local info = element and not element.unbound and element.bindingInfo
+		if info and info.button and info.actionID and Constants.IsSpellOrPetBinding(info) then
+			local rankEntry = SpellRanks.GetRankEntryForAction(info.actionID)
+			if rankEntry and rankEntry.group and #rankEntry.group.entries > 1 then
+				local ruleMode = SpellRanks.GetRuleForBinding(info, rankEntry)
+				local targetEntry = SpellRanks.GetTargetEntryForRule(rankEntry.group, ruleMode)
+				if targetEntry and targetEntry.actionID and targetEntry.actionID ~= info.actionID then
+					info.actionID = targetEntry.actionID
+					updated = updated + 1
+				end
+			end
+		end
+	end
+
+	if updated > 0 then
+		if ClickBindingFrame.CleanDataProvider then
+			ClickBindingFrame:CleanDataProvider()
+		end
+		ClickBindingUI.RebuildGroups()
+		ClickBindingFrame.pendingChanges = true
+		SetSaveButtonGlowShown(true)
+		ClickBindingUI.RefreshVisibleLines()
+		if EventRegistry and EventRegistry.TriggerEvent then
+			EventRegistry:TriggerEvent("ClickBindingFrame.UpdateFrames")
+		end
+		if SpellBookUI and SpellBookUI.RefreshBadges then
+			SpellBookUI.RefreshBadges()
+		end
+		if not silentChat and DEFAULT_CHAT_FRAME then
+			DEFAULT_CHAT_FRAME:AddMessage(string.format(L["CHAT_SMART_RULES_APPLIED_FORMAT"], updated))
+		end
+	end
+
+	return updated
+end
+
 local function OpenRankContextMenu(rankButton, lineFrame, elementData, rankEntry)
 	if not MenuUtil or not MenuUtil.CreateContextMenu or not rankEntry or not rankEntry.group then
 		return
@@ -487,6 +622,42 @@ local function OpenRankContextMenu(rankButton, lineFrame, elementData, rankEntry
 	end
 
 	MenuUtil.CreateContextMenu(rankButton, function(_, rootDescription)
+		-- 1. Sektion: Smarte Rang-Regeln (wenn für diese gebundene Zeile aktiv)
+		if Database.Get("enableSmartRankRules") and elementData and elementData.bindingInfo and elementData.bindingInfo.button then
+			rootDescription:CreateTitle(L["SMART_RULE_HEADER"])
+
+			local function IsRuleSelected(modeValue)
+				return SpellRanks.GetRuleForBinding(elementData.bindingInfo, rankEntry) == modeValue
+			end
+
+			local function SetRuleSelected(modeValue)
+				SpellRanks.SetRuleForBinding(elementData.bindingInfo, modeValue, rankEntry)
+				local targetEntry = SpellRanks.GetTargetEntryForRule(group, modeValue)
+				if targetEntry and targetEntry.actionID then
+					SetLineSpellRank(lineFrame, elementData, targetEntry.actionID, modeValue)
+				else
+					ClickBindingUI.UpdateLineWithRank(lineFrame, elementData)
+					ClickBindingUI.ScheduleSmartRuleCheck(0.1)
+				end
+			end
+
+			for _, opt in ipairs(SMART_RULE_OPTIONS) do
+				local targetEntry = SpellRanks.GetTargetEntryForRule(group, opt.mode)
+				local labelText = L[opt.labelKey]
+				if targetEntry and targetEntry.subName and targetEntry.subName ~= "" then
+					labelText = string.format("%s %s(%s)%s", labelText, Colors.MUTED, targetEntry.subName, Colors.RESET)
+				end
+				local ruleRadio = rootDescription:CreateRadio(labelText, IsRuleSelected, SetRuleSelected, opt.mode)
+				ruleRadio:SetTooltip(function(tooltip)
+					GameTooltip_SetTitle(tooltip, L[opt.labelKey])
+					GameTooltip_AddNormalLine(tooltip, L["SMART_RULE_TOOLTIP_DESC"], true)
+				end)
+			end
+
+			rootDescription:CreateDivider()
+		end
+
+		-- 2. Sektion: Direkte Auswahl der gelernten Ränge
 		rootDescription:CreateTitle(string.format(L["SELECT_RANK_TITLE_FORMAT"], group.name))
 
 		local function IsSelected(entryActionID)
@@ -577,6 +748,10 @@ function ClickBindingUI.ShowLineTooltip(lineFrame)
 					1.0, 0.72, 0.2
 				)
 			end
+			if Database.Get("enableSmartRankRules") and bindingInfo.button then
+				local ruleMode = SpellRanks.GetRuleForBinding(bindingInfo, rankEntry)
+				GameTooltip:AddDoubleLine(L["TOOLTIP_SMART_RULE_LABEL"], GetRuleDisplayName(ruleMode), 0.8, 0.8, 0.8, 0.6, 0.85, 1.0)
+			end
 			if Database.Get("showRankSwitcher") then
 				GameTooltip:AddLine(L["TOOLTIP_SWITCH_RANK_HINT"], 0.6, 0.85, 1.0, true)
 			end
@@ -620,7 +795,6 @@ local function EnsureHeaderGroupWidgets(headerFrame)
 	headerFrame.BCCSubDivider = divider
 
 	-- Moderner Pill-Dropdown-Button rechts im Haupt-"Benutzerdefinierte Belegungen"-Header
-	-- Nutzt "common-dropdown-c-button" (ohne eingebrannten Rechtspfeil) + "common-dropdown-a-button" (Pfeil nach unten)
 	local btn = CreateFrame("Button", nil, headerFrame)
 	btn:SetSize(134, 19)
 	btn:SetPoint("RIGHT", headerFrame, "RIGHT", -4, 0)
@@ -835,7 +1009,7 @@ local function EnsureLineRankButton(lineFrame)
 
 	-- Kompaktes Dark-Pill-Dropdown in der 2. Zeile direkt links neben dem DeleteButton (Höhe 18px)
 	local btn = CreateFrame("Button", nil, lineFrame)
-	btn:SetSize(88, 18)
+	btn:SetSize(92, 18)
 	if lineFrame.DeleteButton then
 		btn:SetPoint("RIGHT", lineFrame.DeleteButton, "LEFT", -4, 0)
 	else
@@ -891,11 +1065,9 @@ local function EnsureLineRankButton(lineFrame)
 
 		if mouseButton == "RightButton" then
 			local maxEntry = rankEntry.group.maxEntry
-			if maxEntry and maxEntry.actionID ~= elementData.bindingInfo.actionID then
-				SetLineSpellRank(lineFrame, elementData, maxEntry.actionID)
+			if maxEntry then
+				SetLineSpellRank(lineFrame, elementData, maxEntry.actionID, SpellRanks.RULE_MAX)
 				ClickBindingUI.ShowLineTooltip(lineFrame)
-			else
-				OpenRankContextMenu(self, lineFrame, elementData, rankEntry)
 			end
 		else
 			OpenRankContextMenu(self, lineFrame, elementData, rankEntry)
@@ -914,6 +1086,10 @@ local function EnsureLineRankButton(lineFrame)
 		if rankEntry and rankEntry.group and rankEntry.group.maxEntry then
 			local maxEntry = rankEntry.group.maxEntry
 			GameTooltip:AddLine(string.format(L["RANK_SWITCHER_CURRENT_FORMAT"], rankEntry.subName or "?", maxEntry.subName or "?"), 1, 1, 1)
+			if Database.Get("enableSmartRankRules") and elementData.bindingInfo.button then
+				local ruleMode = SpellRanks.GetRuleForBinding(elementData.bindingInfo, rankEntry)
+				GameTooltip:AddLine(string.format(L["RANK_SWITCHER_RULE_FORMAT"], GetRuleDisplayName(ruleMode)), 0.6, 0.85, 1.0)
+			end
 		end
 		GameTooltip:AddLine(L["RANK_SWITCHER_HINT_LEFT"], 0.6, 0.85, 1.0)
 		GameTooltip:AddLine(L["RANK_SWITCHER_HINT_RIGHT"], 0.25, 1.0, 0.25)
@@ -1007,13 +1183,23 @@ local function ApplyRankToLine(lineFrame, elementData, subtext)
 	if rankBtn then
 		if showRankSwitcher and hasMultipleRanks then
 			local shortRank = SpellRanks.ExtractShortRankText(subtext) or subtext
+			local ruleMode = (Database.Get("enableSmartRankRules") and elementData.bindingInfo.button)
+				and SpellRanks.GetRuleForBinding(elementData.bindingInfo, rankEntry)
+				or (isMaxRank and SpellRanks.RULE_MAX or SpellRanks.RULE_FIXED)
+			local shortTag = GetRuleShortTag(ruleMode, isMaxRank)
+
 			if highlightDownranks and isMaxRank then
-				rankBtn.Text:SetText(string.format("%s%s (%s)%s", Colors.TAG_MAX, shortRank, L["TAG_MAX_SHORT"], Colors.RESET))
+				rankBtn.Text:SetText(string.format("%s%s (%s)%s", Colors.TAG_MAX, shortRank, shortTag, Colors.RESET))
 				if rankBtn.Bg then
 					rankBtn.Bg:SetVertexColor(0.82, 1.0, 0.85, 1.0)
 				end
+			elseif ruleMode == SpellRanks.RULE_MAX_MINUS_1 or ruleMode == SpellRanks.RULE_MAX_MINUS_2 or ruleMode == SpellRanks.RULE_MAX_MINUS_3 then
+				rankBtn.Text:SetText(string.format("%s%s (%s)%s", Colors.RANK_MAX, shortRank, shortTag, Colors.RESET))
+				if rankBtn.Bg then
+					rankBtn.Bg:SetVertexColor(0.82, 0.94, 1.0, 1.0)
+				end
 			elseif highlightDownranks and not isMaxRank then
-				rankBtn.Text:SetText(string.format("%s%s%s", Colors.RANK_DOWN, shortRank, Colors.RESET))
+				rankBtn.Text:SetText(string.format("%s%s (%s)%s", Colors.RANK_DOWN, shortRank, shortTag, Colors.RESET))
 				if rankBtn.Bg then
 					rankBtn.Bg:SetVertexColor(1.0, 0.88, 0.72, 1.0)
 				end
@@ -1135,7 +1321,13 @@ local function HookLineFrame(lineFrame)
 end
 
 function ClickBindingUI.RefreshVisibleLines()
-	if ClickBindingFrame and ClickBindingFrame:IsShown() and ClickBindingFrame.ScrollBox and ClickBindingFrame.ScrollBox.ForEachFrame then
+	if ClickBindingFrame
+		and ClickBindingFrame:IsShown()
+		and ClickBindingFrame.ScrollBox
+		and ClickBindingFrame.ScrollBox.GetView
+		and ClickBindingFrame.ScrollBox:GetView()
+		and ClickBindingFrame.ScrollBox.ForEachFrame
+	then
 		ClickBindingFrame.ScrollBox:ForEachFrame(function(frame)
 			local elementData = frame.GetElementData and frame:GetElementData()
 			if elementData and (elementData.elementType == ElementDataTypes.DefaultsHeader or elementData.elementType == ElementDataTypes.CustomsHeader) then
@@ -1148,6 +1340,385 @@ function ClickBindingUI.RefreshVisibleLines()
 		end)
 	end
 end
+
+--------------------------------------------------------------------------------
+-- Hero-Card für Smart-Rule-Updates (nach Klassenlehrer, Login oder /reload)
+--------------------------------------------------------------------------------
+
+local MAX_HERO_ROWS = 4
+
+local function BuildUpdatesSignature(updates)
+	local parts = {}
+	for _, u in ipairs(updates) do
+		table.insert(parts, string.format("%s:%s->%s", tostring(u.ruleKey or ""), tostring(u.currentEntry and u.currentEntry.actionID or 0), tostring(u.targetEntry and u.targetEntry.actionID or 0)))
+	end
+	table.sort(parts)
+	return table.concat(parts, ";")
+end
+
+local function EnsureHeroCardFrame()
+	if heroCardFrame then
+		return heroCardFrame
+	end
+
+	local card = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+	card:SetSize(390, 180)
+	local savedPos = (type(BetterClickCastingDB) == "table") and BetterClickCastingDB.heroCardPos or nil
+	if type(savedPos) == "table" and savedPos.point and savedPos.relativePoint and type(savedPos.x) == "number" and type(savedPos.y) == "number" then
+		card:SetPoint(savedPos.point, UIParent, savedPos.relativePoint, savedPos.x, savedPos.y)
+	else
+		card:SetPoint("TOP", UIParent, "TOP", 0, -95)
+	end
+	card:SetFrameStrata("DIALOG")
+	card:SetFrameLevel(120)
+	card:SetClampedToScreen(true)
+	card:SetMovable(true)
+	card:EnableMouse(true)
+	card:RegisterForDrag("LeftButton")
+	card:SetScript("OnDragStart", card.StartMoving)
+	card:SetScript("OnDragStop", function(self)
+		self:StopMovingOrSizing()
+		local point, _, relativePoint, xOfs, yOfs = self:GetPoint(1)
+		if point and relativePoint and xOfs and yOfs and type(BetterClickCastingDB) == "table" then
+			BetterClickCastingDB.heroCardPos = {
+				point = point,
+				relativePoint = relativePoint,
+				x = math.floor(xOfs + 0.5),
+				y = math.floor(yOfs + 0.5),
+			}
+		end
+	end)
+
+	if card.SetBackdrop then
+		card:SetBackdrop({
+			bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+			edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Gold-Border",
+			tile = true,
+			tileSize = 32,
+			edgeSize = 24,
+			insets = { left = 6, right = 6, top = 6, bottom = 6 },
+		})
+	end
+
+	local icon = card:CreateTexture(nil, "ARTWORK")
+	icon:SetSize(24, 24)
+	icon:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -13)
+	icon:SetAtlas(Constants.ICON_ATLAS)
+	card.Icon = icon
+
+	local title = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	title:SetPoint("LEFT", icon, "RIGHT", 8, 0)
+	title:SetPoint("RIGHT", card, "RIGHT", -34, 0)
+	title:SetJustifyH("LEFT")
+	title:SetWordWrap(false)
+	title:SetText(L["HEROCARD_TITLE"])
+	card.Title = title
+
+	local closeBtn = CreateFrame("Button", nil, card, "UIPanelCloseButton")
+	closeBtn:SetPoint("TOPRIGHT", card, "TOPRIGHT", -4, -4)
+	closeBtn:SetScript("OnClick", function()
+		PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
+		if card.currentSignature then
+			dismissedSignature = card.currentSignature
+		end
+		card:Hide()
+	end)
+	closeBtn:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText(L["HEROCARD_BTN_DISMISS_DESC"], 1, 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	closeBtn:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+	card.CloseButton = closeBtn
+
+	local subtitle = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	subtitle:SetPoint("TOPLEFT", card, "TOPLEFT", 16, -42)
+	subtitle:SetPoint("TOPRIGHT", card, "TOPRIGHT", -16, -42)
+	subtitle:SetJustifyH("LEFT")
+	subtitle:SetText(L["HEROCARD_SUBTITLE"])
+	card.Subtitle = subtitle
+
+	local divider = card:CreateTexture(nil, "ARTWORK")
+	divider:SetAtlas("Options_HorizontalDivider", true)
+	divider:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -5)
+	divider:SetPoint("TOPRIGHT", subtitle, "BOTTOMRIGHT", 0, -5)
+	divider:SetAlpha(0.6)
+	card.Divider = divider
+
+	card.Rows = {}
+	for i = 1, MAX_HERO_ROWS do
+		local row = CreateFrame("Frame", nil, card)
+		row:SetSize(358, 20)
+		row:SetPoint("TOPLEFT", card, "TOPLEFT", 16, -62 - ((i - 1) * 22))
+
+		local rowIcon = row:CreateTexture(nil, "ARTWORK")
+		rowIcon:SetSize(18, 18)
+		rowIcon:SetPoint("LEFT", row, "LEFT", 0, 0)
+		row.Icon = rowIcon
+
+		local rowText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		rowText:SetPoint("LEFT", rowIcon, "RIGHT", 6, 0)
+		rowText:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+		rowText:SetJustifyH("LEFT")
+		rowText:SetWordWrap(false)
+		row.Text = rowText
+
+		row:Hide()
+		card.Rows[i] = row
+	end
+
+	local moreText = card:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	moreText:SetJustifyH("LEFT")
+	moreText:Hide()
+	card.MoreText = moreText
+
+	local applyBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+	applyBtn:SetSize(172, 24)
+	applyBtn:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 16, 14)
+	applyBtn:SetText(L["HEROCARD_BTN_OPEN_APPLY"])
+	applyBtn:SetScript("OnClick", function()
+		PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+		card:Hide()
+		if ClickBindingFrame and ClickBindingFrame:IsShown() then
+			ClickBindingUI.ApplySmartRulesToDataProvider(false)
+		elseif ns.MinimapButton and ns.MinimapButton.ToggleClickCastingWindow then
+			ns.MinimapButton.ToggleClickCastingWindow()
+			if ClickBindingFrame and ClickBindingFrame:IsShown() then
+				ClickBindingUI.SetupHooks()
+				ClickBindingUI.ApplySmartRulesToDataProvider(false)
+			end
+		end
+	end)
+	applyBtn:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip_SetTitle(GameTooltip, L["HEROCARD_BTN_OPEN_APPLY"])
+		GameTooltip_AddNormalLine(GameTooltip, L["HEROCARD_BTN_OPEN_APPLY_DESC"], true)
+		GameTooltip:Show()
+	end)
+	applyBtn:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+	card.ApplyButton = applyBtn
+
+	local keepBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+	keepBtn:SetSize(172, 24)
+	keepBtn:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -16, 14)
+	keepBtn:SetText(L["HEROCARD_BTN_KEEP_CURRENT"])
+	keepBtn:SetScript("OnClick", function()
+		PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
+		local updates = card.pendingUpdates or {}
+		local lockedCount = 0
+		for _, u in ipairs(updates) do
+			if u.bindingInfo then
+				SpellRanks.SetRuleForBinding(u.bindingInfo, SpellRanks.RULE_FIXED, u.currentEntry)
+				lockedCount = lockedCount + 1
+			end
+		end
+		card:Hide()
+		ClickBindingUI.RefreshVisibleLines()
+		if lockedCount > 0 and DEFAULT_CHAT_FRAME then
+			DEFAULT_CHAT_FRAME:AddMessage(string.format(L["CHAT_SMART_RULES_LOCKED_FIXED_FORMAT"], lockedCount))
+		end
+	end)
+	keepBtn:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip_SetTitle(GameTooltip, L["HEROCARD_BTN_KEEP_CURRENT"])
+		GameTooltip_AddNormalLine(GameTooltip, L["HEROCARD_BTN_KEEP_CURRENT_DESC"], true)
+		GameTooltip:Show()
+	end)
+	keepBtn:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+	card.KeepButton = keepBtn
+
+	card:Hide()
+	heroCardFrame = card
+	return card
+end
+
+function ClickBindingUI.HideHeroCard()
+	if heroCardFrame then
+		heroCardFrame:Hide()
+	end
+end
+
+function ClickBindingUI.CheckAndShowHeroCard(resetDismissed)
+	if resetDismissed then
+		dismissedSignature = nil
+	end
+
+	if not Database.Get("enableSmartRankRules") then
+		ClickBindingUI.HideHeroCard()
+		return
+	end
+
+	-- Niemals im Kampf oder während das Klassenlehrer- bzw. Klickbelegungs-Fenster offen ist einblenden
+	if (InCombatLockdown and InCombatLockdown())
+		or (ClassTrainerFrame and ClassTrainerFrame:IsShown())
+		or (ClickBindingFrame and ClickBindingFrame:IsShown())
+	then
+		ClickBindingUI.HideHeroCard()
+		return
+	end
+
+	local updates = SpellRanks.GetPendingSmartRuleUpdates()
+	if #updates == 0 then
+		dismissedSignature = nil
+		ClickBindingUI.HideHeroCard()
+		return
+	end
+
+	local sig = BuildUpdatesSignature(updates)
+	if dismissedSignature and dismissedSignature == sig then
+		return
+	end
+
+	local card = EnsureHeroCardFrame()
+	card.pendingUpdates = updates
+	card.currentSignature = sig
+
+	-- Alle Zeilen-Widgets zuerst verstecken (Frame-Recycling-Hygiene)
+	for i = 1, MAX_HERO_ROWS do
+		card.Rows[i]:Hide()
+	end
+	card.MoreText:Hide()
+
+	local shownCount = math.min(#updates, MAX_HERO_ROWS)
+	for i = 1, shownCount do
+		local u = updates[i]
+		local row = card.Rows[i]
+		row.Icon:SetTexture(u.spellIcon or 134400)
+
+		local shortBind = Constants.GetShortBindingString(u.bindingInfo) or ""
+		local curSub = (u.currentEntry and u.currentEntry.subName ~= "" and u.currentEntry.subName) or "?"
+		local tgtSub = (u.targetEntry and u.targetEntry.subName ~= "" and u.targetEntry.subName) or "?"
+		local ruleTag = GetRuleShortTag(u.ruleMode, u.ruleMode == SpellRanks.RULE_MAX)
+
+		row.Text:SetText(string.format(
+			"%s %s[%s]%s: %s%s%s -> %s%s (%s)%s",
+			u.spellName or "?",
+			Colors.MUTED,
+			shortBind,
+			Colors.RESET,
+			Colors.RANK_DOWN,
+			curSub,
+			Colors.RESET,
+			Colors.TAG_MAX,
+			tgtSub,
+			ruleTag,
+			Colors.RESET
+		))
+		row:Show()
+	end
+
+	local extraCount = #updates - shownCount
+	local totalHeight = 110 + (shownCount * 22)
+	if extraCount > 0 then
+		card.MoreText:ClearAllPoints()
+		card.MoreText:SetPoint("TOPLEFT", card, "TOPLEFT", 16, -62 - (shownCount * 22))
+		card.MoreText:SetText(string.format(L["HEROCARD_MORE_FORMAT"], extraCount))
+		card.MoreText:Show()
+		totalHeight = totalHeight + 18
+	end
+
+	card:SetHeight(totalHeight)
+	card:Show()
+end
+
+function ClickBindingUI.ScheduleSmartRuleCheck(delaySeconds, resetDismissed)
+	if resetDismissed then
+		dismissedSignature = nil
+	end
+	if smartCheckPending then
+		return
+	end
+	if not C_Timer or not C_Timer.After then
+		ClickBindingUI.CheckAndShowHeroCard(false)
+		return
+	end
+	smartCheckPending = true
+	C_Timer.After(delaySeconds or 0.6, function()
+		smartCheckPending = false
+		ClickBindingUI.CheckAndShowHeroCard(false)
+	end)
+end
+
+-- Test-Helfer (/bcc test): Bereitet im ClickBindingFrame genau 2 Zauber für die Regeln
+-- "Immer MAX" und "Immer MAX - 1" mit abweichendem Ist-Rang vor, sodass nach Klick auf
+-- "Speichern" sofort die Hero-Card mit beiden Regeln getestet werden kann.
+function ClickBindingUI.PrepareSmartRuleTest()
+	if InCombatLockdown and InCombatLockdown() then
+		return
+	end
+	if not (ClickBindingFrame and ClickBindingFrame:IsShown()) and ns.MinimapButton and ns.MinimapButton.ToggleClickCastingWindow then
+		ns.MinimapButton.ToggleClickCastingWindow()
+	end
+	if not ClickBindingFrame or not ClickBindingFrame.dataProvider then
+		return
+	end
+
+	ClickBindingUI.SetupHooks()
+	SpellRanks.InvalidateCache()
+
+	local testRules = {
+		SpellRanks.RULE_MAX,
+		SpellRanks.RULE_MAX_MINUS_1,
+	}
+	local ruleIdx = 1
+
+	for _, element in ClickBindingFrame.dataProvider:Enumerate() do
+		if ruleIdx > #testRules then
+			break
+		end
+		local info = element and not element.unbound and element.bindingInfo
+		if info and info.button and info.actionID and Constants.IsSpellOrPetBinding(info) then
+			local rankEntry = SpellRanks.GetRankEntryForAction(info.actionID)
+			local group = rankEntry and rankEntry.group
+			if group and #group.entries > 1 then
+				local mode = testRules[ruleIdx]
+				local targetEntry = SpellRanks.GetTargetEntryForRule(group, mode)
+				if targetEntry then
+					-- Einen abweichenden Rang aus derselben Gruppe wählen, damit ein echtes Update ansteht
+					local deviantEntry = nil
+					for _, candidate in ipairs(group.entries) do
+						if candidate.actionID ~= targetEntry.actionID then
+							deviantEntry = candidate
+							break
+						end
+					end
+					if deviantEntry then
+						info.actionID = deviantEntry.actionID
+						SpellRanks.SetRuleForBinding(info, mode, deviantEntry)
+						ruleIdx = ruleIdx + 1
+					end
+				end
+			end
+		end
+	end
+
+	local preparedCount = ruleIdx - 1
+	if preparedCount > 0 then
+		dismissedSignature = nil
+		if ClickBindingFrame.CleanDataProvider then
+			ClickBindingFrame:CleanDataProvider()
+		end
+		ClickBindingUI.RebuildGroups()
+		ClickBindingFrame.pendingChanges = true
+		SetSaveButtonGlowShown(true)
+		ClickBindingUI.RefreshVisibleLines()
+		if DEFAULT_CHAT_FRAME then
+			DEFAULT_CHAT_FRAME:AddMessage("|cff40ff40Better Click Casting (Test):|r " .. tostring(preparedCount) .. " Belegung(en) für Smart-Regel-Test (Immer MAX & Immer MAX - 1) vorbereitet. Klicke jetzt auf |cffffd100Speichern|r!")
+		end
+	elseif DEFAULT_CHAT_FRAME then
+		DEFAULT_CHAT_FRAME:AddMessage("|cffffb833Better Click Casting (Test):|r Keine mehrstufigen Zauber in deinen Klickbelegungen gefunden.")
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Zauberbuch-Sync und Hooks
+--------------------------------------------------------------------------------
 
 local function RefreshSpellBookRanksDisplay()
 	if PlayerSpellsFrame and PlayerSpellsFrame.SpellBookFrame and PlayerSpellsFrame.SpellBookFrame.UpdateDisplayedSpells then
@@ -1211,7 +1782,12 @@ function ClickBindingUI.SyncAutoShowAllRanks()
 end
 
 function ClickBindingUI.SetupHooks()
-	if isHooked or not ClickBindingFrame or not ClickBindingLineMixin then
+	if isHooked
+		or not ClickBindingFrame
+		or not ClickBindingLineMixin
+		or not ClickBindingFrame.ScrollBox
+		or (ClickBindingFrame.ScrollBox.GetView and not ClickBindingFrame.ScrollBox:GetView())
+	then
 		return
 	end
 	isHooked = true
@@ -1228,8 +1804,9 @@ function ClickBindingUI.SetupHooks()
 		end)
 	end
 
-	-- Auto-Show-All-Spell-Ranks und Zauberbuch-Sync beim Öffnen und Schließen des ClickBindingFrames
+	-- Auto-Show-All-Spell-Ranks, Smart-Rule-Sync und Zauberbuch-Sync beim Öffnen und Schließen des ClickBindingFrames
 	ClickBindingFrame:HookScript("OnShow", function()
+		ClickBindingUI.HideHeroCard()
 		ClickBindingUI.SyncAutoShowAllRanks()
 		ClickBindingUI.RebuildGroups()
 		if SpellBookUI and SpellBookUI.RefreshBadges then
@@ -1238,10 +1815,13 @@ function ClickBindingUI.SetupHooks()
 	end)
 
 	ClickBindingFrame:HookScript("OnHide", function()
+		SetSaveButtonGlowShown(false)
 		ClickBindingUI.SyncAutoShowAllRanks()
 		if SpellBookUI and SpellBookUI.RefreshBadges then
 			SpellBookUI.RefreshBadges()
 		end
+		-- Falls das Fenster ohne Speichern geschlossen wurde, prüft die Hero-Card kurz darauf, ob noch Updates offen sind
+		ClickBindingUI.ScheduleSmartRuleCheck(0.4)
 	end)
 
 	-- 1. Hooks auf Mixin-Ebene für Zeilen und Header
@@ -1259,7 +1839,7 @@ function ClickBindingUI.SetupHooks()
 
 	-- 2. Bestehende und neu erworbene Frames in der ScrollBox nachrüsten
 	if ClickBindingFrame.ScrollBox then
-		if ClickBindingFrame.ScrollBox.ForEachFrame then
+		if ClickBindingFrame.ScrollBox.GetView and ClickBindingFrame.ScrollBox:GetView() and ClickBindingFrame.ScrollBox.ForEachFrame then
 			ClickBindingFrame.ScrollBox:ForEachFrame(function(frame)
 				local elementData = frame.GetElementData and frame:GetElementData()
 				if elementData and (elementData.elementType == ElementDataTypes.DefaultsHeader or elementData.elementType == ElementDataTypes.CustomsHeader) then
@@ -1286,13 +1866,13 @@ function ClickBindingUI.SetupHooks()
 	end
 
 	-- 3. Bei Refresh, CleanDataProvider und ResetToDefaultProfile Gruppen und Cache aktualisieren
-	-- Wichtig: ClickBindingFrameMixin:OnShow() ruft zuerst self:Refresh() und direkt danach
-	-- self:SetFocusedFrame(self.FramePortraits[1]:GetFrame()) auf. Durch EnsureSpellBookTabForClickBinding()
-	-- im Refresh-Hook wird PlayerSpellsFrame rechtzeitig vor SetFocusedFrame auf den Zauberbuch-Tab gesetzt.
+	-- Wichtig: Normales Öffnen/Refresh verändert keine Ränge ungefragt; erst der Klick auf die Hero-Card
+	-- ruft ApplySmartRulesToDataProvider() auf.
 	if ClickBindingFrame.Refresh then
 		hooksecurefunc(ClickBindingFrame, "Refresh", function()
 			ClickBindingUI.EnsureSpellBookTabForClickBinding()
 			SpellRanks.InvalidateCache()
+			SetSaveButtonGlowShown(false)
 			ClickBindingUI.RebuildGroups()
 			if SpellBookUI and SpellBookUI.RefreshBadges then
 				SpellBookUI.RefreshBadges()
@@ -1308,12 +1888,14 @@ function ClickBindingUI.SetupHooks()
 
 	if ClickBindingFrame.ResetToDefaultProfile then
 		hooksecurefunc(ClickBindingFrame, "ResetToDefaultProfile", function()
+			SetSaveButtonGlowShown(false)
 			ClickBindingUI.RebuildGroups()
 		end)
 	end
 
 	-- Falls ClickBindingFrame beim erstmaligen Laden bereits offen ist, sofort synchronisieren
 	if ClickBindingFrame:IsShown() then
+		ClickBindingUI.HideHeroCard()
 		ClickBindingUI.SyncAutoShowAllRanks()
 		ClickBindingUI.RebuildGroups()
 		ClickBindingUI.RefreshVisibleLines()

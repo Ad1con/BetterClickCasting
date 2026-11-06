@@ -18,6 +18,9 @@ function MinimapButton.ToggleClickCastingWindow()
 		end
 		return
 	end
+	if not (ClickBindingFrame and ClickBindingFrame:IsShown()) and ns.ClickBindingUI and ns.ClickBindingUI.EnsureSpellBookTabForClickBinding then
+		ns.ClickBindingUI.EnsureSpellBookTabForClickBinding()
+	end
 	if ToggleClickBindingFrame then
 		ToggleClickBindingFrame()
 	elseif ClickBindingFrame_Toggle then

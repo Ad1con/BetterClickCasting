@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.1] (2026-11-06)
+### Fixed
+- **Spellbook vs. Talent Tree Tab Fix:** Opening Click Cast Bindings after viewing the Talent Tree (`N`) now automatically switches `PlayerSpellsFrame` back to the **SpellBook** tab instead of opening the Talent Tree in the center of the screen and closing `ClickBindingFrame`.
+
 ## [0.3.0] (2026-11-05)
 ### Added
 - **List Grouping & Logical Sorting:**

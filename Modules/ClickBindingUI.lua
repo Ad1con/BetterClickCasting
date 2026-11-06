@@ -1155,6 +1155,34 @@ local function RefreshSpellBookRanksDisplay()
 	end
 end
 
+function ClickBindingUI.EnsureSpellBookTabForClickBinding()
+	if InCombatLockdown and InCombatLockdown() then
+		return
+	end
+	if not PlayerSpellsFrame or not PlayerSpellsUtil or not PlayerSpellsUtil.FrameTabs then
+		return
+	end
+	local spellBookTab = PlayerSpellsUtil.FrameTabs.SpellBook
+	if not spellBookTab then
+		return
+	end
+	if PlayerSpellsFrame.ClearInspectUnit and PlayerSpellsFrame.IsInspecting and PlayerSpellsFrame:IsInspecting() then
+		PlayerSpellsFrame:ClearInspectUnit()
+	end
+	-- In WoW Forever teilen sich Zauberbuch (area = "centerOrLeft") und Talentbaum (area = "center")
+	-- denselben PlayerSpellsFrame. Wurde zuvor der Talentbaum geöffnet, muss vor ShowUIPanel(PlayerSpellsFrame)
+	-- zurück auf den SpellBook-Tab gewechselt werden, da ShowUIPanel mit area = "center" sonst CloseWindows()
+	-- ausführt und das ClickBindingFrame sofort wieder schließt.
+	if PlayerSpellsFrame.IsFrameTabActive and not PlayerSpellsFrame:IsFrameTabActive(spellBookTab) then
+		if PlayerSpellsFrame:IsShown() and HideUIPanel then
+			HideUIPanel(PlayerSpellsFrame)
+		end
+		if PlayerSpellsFrame.TrySetTab then
+			PlayerSpellsFrame:TrySetTab(spellBookTab)
+		end
+	end
+end
+
 function ClickBindingUI.SyncAutoShowAllRanks()
 	if InCombatLockdown and InCombatLockdown() then
 		return
@@ -1191,6 +1219,13 @@ function ClickBindingUI.SetupHooks()
 	-- 0. Settings-Button im ClickBindingFrame einrichten
 	if SettingsUI and SettingsUI.AttachToClickBindingFrame then
 		SettingsUI.AttachToClickBindingFrame()
+	end
+
+	-- Beim Klick auf das Zauberbuch-Portrait im ClickBindingFrame sicherstellen, dass der SpellBook-Tab aktiv ist
+	if ClickBindingFrame.PlayerSpellsPortrait and ClickBindingFrame.PlayerSpellsPortrait.HookScript then
+		ClickBindingFrame.PlayerSpellsPortrait:HookScript("OnMouseDown", function()
+			ClickBindingUI.EnsureSpellBookTabForClickBinding()
+		end)
 	end
 
 	-- Auto-Show-All-Spell-Ranks und Zauberbuch-Sync beim Öffnen und Schließen des ClickBindingFrames
@@ -1251,8 +1286,12 @@ function ClickBindingUI.SetupHooks()
 	end
 
 	-- 3. Bei Refresh, CleanDataProvider und ResetToDefaultProfile Gruppen und Cache aktualisieren
+	-- Wichtig: ClickBindingFrameMixin:OnShow() ruft zuerst self:Refresh() und direkt danach
+	-- self:SetFocusedFrame(self.FramePortraits[1]:GetFrame()) auf. Durch EnsureSpellBookTabForClickBinding()
+	-- im Refresh-Hook wird PlayerSpellsFrame rechtzeitig vor SetFocusedFrame auf den Zauberbuch-Tab gesetzt.
 	if ClickBindingFrame.Refresh then
 		hooksecurefunc(ClickBindingFrame, "Refresh", function()
+			ClickBindingUI.EnsureSpellBookTabForClickBinding()
 			SpellRanks.InvalidateCache()
 			ClickBindingUI.RebuildGroups()
 			if SpellBookUI and SpellBookUI.RefreshBadges then
